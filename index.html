@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="おうち帳">
-<title>おうち帳 v0.17</title>
+<title>おうち帳 v0.18</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
@@ -244,7 +244,7 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 
 <script>
 'use strict';
-const VERSION = 'v0.17';
+const VERSION = 'v0.18';
 const KEY = 'ouchicho-data';
 const WD = ['日','月','火','水','木','金','土'];
 // 月ごとの季節色（画面のアクセント色）
@@ -696,7 +696,7 @@ const judgeBadge = j => j === '安い' ? '<span class="badge cheap">安い</span
 
 // ---------- 状態 ----------
 const now = new Date();
-const S = {picker:false, pickCat:'freq', shopMode:false, fpStart:null, fpDays:7, fpSel:null, showDone:false, reqQ:'', reqRole:'main', shopEdit:null, tab:'plan', y:now.getFullYear(), m:now.getMonth()+1, master:null, menuCat:'all', dayCat:'all', menuRole:'all', dayRole:'all', gcatF:'all', menuQ:'', menuF:'all', itemQ:'', itemF:'all', dayQ:'', pickQ:'', shopQ:'', day:null, priceItem:null, week:null};
+const S = {pcat:'food', pgc:'all', pj:'all', pf:{item:'', store:null, price:''}, picker:false, pickCat:'freq', shopMode:false, fpStart:null, fpDays:7, fpSel:null, showDone:false, reqQ:'', reqRole:'main', shopEdit:null, tab:'plan', y:now.getFullYear(), m:now.getMonth()+1, master:null, menuCat:'all', dayCat:'all', menuRole:'all', dayRole:'all', gcatF:'all', menuQ:'', menuF:'all', itemQ:'', itemF:'all', dayQ:'', pickQ:'', shopQ:'', day:null, priceItem:null, week:null};
 let mdraft = null, idraft = null;
 
 // ---------- 画面 ----------
@@ -862,27 +862,38 @@ function viewMaster(){
 }
 
 function viewPrices(){
-  const opt = cat => db.items.filter(i => i.cat === cat).sort((a,b) => byJa(a.name,b.name))
-    .map(i => `<option value="${i.id}" ${i.id === S.priceItem ? 'selected' : ''}>${esc(i.name)}</option>`).join('');
-  const tracked = db.items.map(it => ({it, st:priceStats(it.id)})).filter(x => x.st.n)
+  // 食材／日用品とカテゴリで、入力する品目の候補と下の一覧の両方を絞る
+  const cat = S.pcat, cats = itemCats(cat);
+  if (!gcatChoices(cat).some(([v]) => v === S.pgc)) S.pgc = 'all';
+  const gcOk = i => S.pgc === 'all' || (S.pgc === 'none' ? !hasItemCat(i) : i.gcatId === S.pgc);
+  const pool = db.items.filter(i => i.cat === cat && gcOk(i)).sort((a,b) => byJa(a.name,b.name));
+  const opt = list => list.map(i => `<option value="${i.id}" ${i.id === S.pf.item ? 'selected' : ''}>${esc(i.name)}</option>`).join('');
+  const options = S.pgc === 'all'
+    ? [...cats.map(c => [c.name, pool.filter(i => i.gcatId === c.id)]), ['未分類', pool.filter(i => !hasItemCat(i))]].filter(([, l]) => l.length).map(([n, l]) => `<optgroup label="${esc(n)}">${opt(l)}</optgroup>`).join('')
+    : opt(pool);
+  const all = pool.map(it => ({it, st:priceStats(it.id)})).filter(x => x.st.n);
+  const tracked = all.filter(x => S.pj === 'cheap' ? x.st.judge === '安い' : S.pj === 'high' ? x.st.judge === '高い' : S.pj === 'one' ? x.st.n === 1 : true)
     .sort((a,b) => b.st.latest.date.localeCompare(a.st.latest.date) || b.st.latest.ts - a.st.latest.ts);
   const rows = tracked.map(({it, st}) => `<button class="row" data-act="price-open" data-id="${it.id}"><div class="main">
       <div class="name">${esc(it.name)}${judgeBadge(st.judge)}</div>
-      <div class="sub">最新 ${yen(st.latest.price)}（${esc(storeName(st.latest.storeId) || '店未入力')} ${shortDate(st.latest.date)}）　${st.n >= 2 ? `${yen(Math.floor(st.avg * 0.92))}以下なら買い` : `${st.n}件`}</div></div></button>`).join('');
+      <div class="sub">最新 ${yen(st.latest.price)}（${esc(storeName(st.latest.storeId) || '店未入力')} ${shortDate(st.latest.date)}）　${st.n >= 2 ? `${yen(Math.floor(st.avg * 0.92))}以下なら買い` : `${st.n}件`}</div></div>${chevron()}</button>`).join('');
+  const store = S.pf.store != null ? S.pf.store : db.settings.lastStoreId;
   return topBar('価格') + `<div class="wrap">
+    ${segHtml([['food','食材'],['goods','日用品']], cat, 'p-cat')}
+    ${filterChips(gcatChoices(cat), S.pgc, 'p-gc')}
     <div class="form-card">
-      <label class="field"><span class="lbl">品目</span><select class="input" id="pItem"><option value="">選んでください</option><optgroup label="食材">${opt('food')}</optgroup><optgroup label="日用品">${opt('goods')}</optgroup></select></label>
+      <label class="field"><span class="lbl">品目（${pool.length}品から選ぶ）</span><select class="input" id="pItem" data-ch="pf-item"><option value="">選んでください</option>${options}</select></label>
       <div class="pair">
-        <label class="field"><span class="lbl">お店</span><select class="input" id="pStore">${storeOptions(db.settings.lastStoreId, '選ばない')}</select></label>
-        <label class="field"><span class="lbl">価格（円）</span><input class="input" id="pPrice" type="number" inputmode="numeric" min="1" placeholder="198"></label>
+        <label class="field"><span class="lbl">お店</span><select class="input" id="pStore" data-ch="pf-store">${storeOptions(store, '選ばない')}</select></label>
+        <label class="field"><span class="lbl">価格（円）</span><input class="input" id="pPrice" type="number" inputmode="numeric" min="1" placeholder="198" value="${esc(S.pf.price)}" data-in="pf-price"></label>
       </div>
       <div class="actions" style="margin-top:14px"><button class="btn sub" data-act="store-new" data-from="prices">お店を追加</button><button class="btn" data-act="price-add">記録する</button></div>
     </div>
-    <div class="section-title">品目ごとの価格</div>
-    <div class="list">${rows || '<div class="empty-msg">まだ記録がありません。買い物のついでに数品だけ記録してみてください</div>'}</div>
+    <div class="section-title">品目ごとの価格<span class="cnt">${tracked.length}品</span></div>
+    ${filterChips([['all','すべて'],['cheap','今安い'],['high','今高い'],['one','記録1回だけ']], S.pj, 'p-j').replace('chips filters', 'chips filters" style="margin-top:0')}
+    <div class="list cols">${rows || `<div class="empty-msg">${all.length ? '条件に合う品目がありません' : 'この分類の記録はまだありません'}</div>`}</div>
     <p class="hint">同じ品目を2回以上記録すると、平均と比べた「安い・普通・高い」が出て、献立の候補順にも反映されます</p></div>`;
 }
-
 function shopRows(){
   return db.shoplist.filter(e => itemById(e.itemId)).map(e => {
     const it = itemById(e.itemId), g = itemGuide(e.itemId);
@@ -1421,10 +1432,13 @@ document.addEventListener('click', e => {
       if (!itemId){ toast('品目を選んでください'); break; }
       if (!(price > 0)){ toast('価格を入れてください'); break; }
       db.prices.push({id:uid(), itemId, storeId, price:Math.round(price), date:todayStr(), ts:Date.now()});
-      db.settings.lastStoreId = storeId; S.priceItem = null;
+      db.settings.lastStoreId = storeId; S.priceItem = null; S.pf = {item:'', store:storeId, price:''};
       save(); render(); toast(`${itemById(itemId).name} ${yen(Math.round(price))}を記録しました`); break;
     }
     case 'price-open': openPriceHistory(id); break;
+    case 'p-cat': S.pcat = el.dataset.v; S.pgc = 'all'; render(); break;
+    case 'p-gc': S.pgc = el.dataset.v; render(); break;
+    case 'p-j': S.pj = el.dataset.v; render(); break;
 
     case 'm-teiban': mdraft.teiban = el.dataset.v === 'true'; renderMenuMeta(); break;
     case 'store-new': openStore(null, el.dataset.from); break;
@@ -1537,6 +1551,7 @@ document.addEventListener('input', e => {
   else if (k === 'itemQ'){ S.itemQ = v; $('#itemList').innerHTML = itemListHtml(S.master); }
   else if (k === 'shopQ'){ S.shopQ = v; renderShopPick(); }
   else if (k === 'reqQ'){ S.reqQ = v; renderReqPick(); }
+  else if (k === 'pf-price') S.pf.price = v;
   else if (k === 'pickQ'){ S.pickQ = v; renderPick(); }
   else if (k === 'm-name') mdraft.name = v;
   else if (k === 'm-steps') mdraft.steps = v;
@@ -1552,6 +1567,8 @@ document.addEventListener('input', e => {
 document.addEventListener('change', e => {
   if (e.target.dataset.ch === 'i-store' && idraft) idraft.favStoreId = e.target.value;
   if (e.target.dataset.ch === 'fp-start' && e.target.value){ S.fpStart = e.target.value; S.fpSel = null; renderShopPlan(); }
+  if (e.target.dataset.ch === 'pf-item') S.pf.item = e.target.value;
+  if (e.target.dataset.ch === 'pf-store') S.pf.store = e.target.value;
   if (e.target.dataset.ch === 'my-name'){ const v = e.target.value.trim(); if (v) db.members[myUid()] = v; else delete db.members[myUid()]; save(); toast('名前を保存しました'); }
   if (e.target.dataset.ch === 'req-date'){
     const r = db.requests.find(x => x.id === e.target.dataset.id), ds = e.target.value;
