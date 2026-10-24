@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="おうち帳">
-<title>おうち帳 v0.14</title>
+<title>おうち帳 v0.15</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
@@ -238,7 +238,7 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 
 <script>
 'use strict';
-const VERSION = 'v0.14';
+const VERSION = 'v0.15';
 const KEY = 'ouchicho-data';
 const WD = ['日','月','火','水','木','金','土'];
 // 月ごとの季節色（画面のアクセント色）
@@ -769,15 +769,16 @@ function menuListHtml(){
     return g.length ? `<div class="section-title">${r ? `<span class="dot r-${r}"></span>` : ''}${esc(name)}<span class="cnt">${g.length}品</span></div><div class="list">${g.map(rowHtml).join('')}</div>` : '';
   }).join('');
 }
-function viewMenus(){
-  return topBar('メニュー', '<button class="btn" data-act="menu-new">追加</button>') +
-    `<div class="wrap"><input class="input" type="search" placeholder="料理名や食材名で探す" value="${esc(S.menuQ)}" data-in="menuQ">
+// メニュー一覧の中身（メニュータブとマスタの両方で使う）
+function menusBody(){
+  return `<div class="wrap"><input class="input" type="search" placeholder="料理名や食材名で探す" value="${esc(S.menuQ)}" data-in="menuQ">
       <div style="margin-top:10px">${segHtml([['all','すべて'], ...ROLES], S.menuRole, 'menu-role')}</div>
       ${filterChips(catChoices(), S.menuCat, 'menu-cat')}
       ${filterChips(MENU_FILTERS, S.menuF, 'menu-f').replace('chips filters', 'chips filters" style="margin-top:0')}
       <div id="menuList">${menuListHtml()}</div>
       <p class="hint">バッジの数字は${S.m}月の旬の食材数と、価格記録で今安い・高い食材数です</p></div>`;
 }
+function viewMenus(){ return topBar('メニュー', '<button class="btn" data-act="menu-new">追加</button>') + menusBody(); }
 
 function itemListHtml(cat){
   const q = S.itemQ.trim(), f = S.itemF;
@@ -813,6 +814,7 @@ function gcatChoices(cat){
 const subBar = (title, right = '') => `<header class="top"><div class="top-inner"><button class="iconbtn" data-act="master-back" aria-label="マスタに戻る">${ICON.prev}</button><h1 style="flex:1">${title}</h1>${right}</div></header>`;
 function viewMaster(){
   const M = S.master;
+  if (M === 'menus') return subBar('メニュー', '<button class="btn" data-act="menu-new">追加</button>') + menusBody();
   if (M === 'food' || M === 'goods'){
     return subBar(M === 'food' ? '食材' : '日用品', '<button class="btn" data-act="item-new">追加</button>') +
       `<div class="wrap"><input class="input" type="search" placeholder="名前で探す" value="${esc(S.itemQ)}" data-in="itemQ">
@@ -842,7 +844,7 @@ function viewMaster(){
     <div class="tiles">
       ${tile('master-open', 'data-v="food"', ICON.items, '食材', `${foods.length}品　今月の旬 ${foods.filter(i => i.season.includes(S.m)).length}`)}
       ${tile('master-open', 'data-v="goods"', ICON.shop, '日用品', `${goods.length}品`)}
-      ${tile('tab', 'data-tab="menus"', ICON.menus, 'メニュー', `${db.menus.length}品　定番 ${db.menus.filter(m => m.teiban).length}`)}
+      ${tile('master-open', 'data-v="menus"', ICON.menus, 'メニュー', `${db.menus.length}品　定番 ${db.menus.filter(m => m.teiban).length}`)}
       ${tile('master-open', 'data-v="stores"', ICON.prices, 'お店', `${db.stores.length}軒`)}
     </div>
     <div class="section-title">分類</div>
