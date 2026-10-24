@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="おうち帳">
-<title>おうち帳 v0.18</title>
+<title>おうち帳 v0.19</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
@@ -113,6 +113,13 @@ header.top.acc{background:var(--acc);color:var(--on-acc)}
 .day.sun .dn{color:var(--bad)} .day.sat .dn{color:var(--sat)}
 .day.today .dn{background:var(--acc);color:var(--on-acc)}
 .dish{font-size:var(--fs-xs);line-height:1.35;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding-left:5px;border-left:3px solid var(--rc,var(--line))}
+.calbar{display:flex;align-items:center;gap:8px;margin-top:14px}
+.calbar .seg{flex:1}
+.cal.cal-2w .day{height:120px}
+.cal.cal-1w .day{height:190px}
+@media (min-width:600px){.cal.cal-2w .day{height:150px}.cal.cal-1w .day{height:240px}}
+.dn.wide{width:auto;padding:0 6px}
+.monthlabel.wk{font-size:var(--fs-l)}
 .dish.more{border-left-color:transparent;color:var(--muted)}
 @media (min-width:600px){.day{height:104px;padding:6px}.dish{font-size:var(--fs-s)}}
 
@@ -244,7 +251,7 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 
 <script>
 'use strict';
-const VERSION = 'v0.18';
+const VERSION = 'v0.19';
 const KEY = 'ouchicho-data';
 const WD = ['日','月','火','水','木','金','土'];
 // 月ごとの季節色（画面のアクセント色）
@@ -494,7 +501,7 @@ function normalize(d){
     Object.values(shopping).forEach(w => w.extra.forEach(id => { if (seen.has(id) || w.checked[id] || w.hidden.includes(id)) return; seen.add(id);
       shoplist.push({id:'m-' + id, itemId:id, note:w.notes[id] || '', storeId:w.store[id] || '', by:w.by[id] || '', from:'', checked:false, ts:0}); }));
   }
-  return {schema:1, items, menus, categories, goodsCats, foodCats, stores, plan, prices, shoplist, requests, members, settings:{lastStoreId}};
+  return {schema:1, items, menus, categories, goodsCats, foodCats, stores, plan, prices, shoplist, requests, members, settings:{lastStoreId, calMode:['month','2w','1w'].includes(st.calMode) ? st.calMode : 'month'}};
 }
 function load(){
   try { const raw = localStorage.getItem(KEY); return raw ? normalize(JSON.parse(raw)) : null; }
@@ -702,21 +709,33 @@ let mdraft = null, idraft = null;
 // ---------- 画面 ----------
 const topBar = (title, right = '') => `<header class="top"><div class="top-inner"><h1>${title}</h1>${right}</div></header>`;
 
+function dayCell(ds, t, limit, showMonth){
+  const d = new Date(ds + 'T00:00:00'), wd = d.getDay();
+  const dishes = (db.plan[ds] || []).map(menuById).filter(Boolean).sort(byRole);
+  const many = dishes.length > limit;  // 入りきらない分は「ほか○品」
+  const shown = (many ? dishes.slice(0, limit - 1) : dishes).map(x => `<span class="dish r-${x.role}">${esc(x.name)}</span>`).join('') + (many ? `<span class="dish more">ほか${dishes.length - limit + 1}品</span>` : '');
+  const label = showMonth || d.getDate() === 1 ? `${d.getMonth()+1}/${d.getDate()}` : d.getDate();
+  return `<button class="day ${wd === 0 ? 'sun' : wd === 6 ? 'sat' : ''} ${ds === t ? 'today' : ''}" data-act="open-day" data-date="${ds}" aria-label="${fmtDate(ds)}"><span class="dn ${String(label).includes('/') ? 'wide' : ''}">${label}</span>${shown}</button>`;
+}
 function viewPlan(){
+  const mode = db.settings.calMode || 'month', t = todayStr();
+  if (mode !== 'month'){ if (!S.wStart) S.wStart = weekStart(t); const mid = new Date(addDays(S.wStart, 3) + 'T00:00:00'); S.y = mid.getFullYear(); S.m = mid.getMonth() + 1; }
   const {y, m} = S;
   const shun = db.items.filter(i => i.cat === 'food' && i.season.includes(m)).sort((a,b) => byJa(a.name,b.name));
-  const first = new Date(y, m-1, 1).getDay(), days = new Date(y, m, 0).getDate(), t = todayStr();
-  let cells = WD.map((w,i) => `<div class="wd ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</div>`).join('');
-  for (let i = 0; i < first; i++) cells += '<div class="day empty"></div>';
-  for (let d = 1; d <= days; d++){
-    const ds = dstr(y,m,d), wd = (first + d - 1) % 7;
-    const dishes = (db.plan[ds] || []).map(menuById).filter(Boolean).sort(byRole);
-    const many = dishes.length > 3;  // マスに入るのは3行まで。4品以上は2品＋「ほか○品」
-    const shown = (many ? dishes.slice(0,2) : dishes).map(x => `<span class="dish r-${x.role}">${esc(x.name)}</span>`).join('') + (many ? `<span class="dish more">ほか${dishes.length - 2}品</span>` : '');
-    cells += `<button class="day ${wd === 0 ? 'sun' : wd === 6 ? 'sat' : ''} ${ds === t ? 'today' : ''}" data-act="open-day" data-date="${ds}" aria-label="${fmtDate(ds)}"><span class="dn">${d}</span>${shown}</button>`;
+  let cells = WD.map((w,i) => `<div class="wd ${i === 0 ? 'sun' : i === 6 ? 'sat' : ''}">${w}</div>`).join(''), label;
+  if (mode === 'month'){
+    const first = new Date(y, m-1, 1).getDay(), days = new Date(y, m, 0).getDate();
+    for (let i = 0; i < first; i++) cells += '<div class="day empty"></div>';
+    for (let d = 1; d <= days; d++) cells += dayCell(dstr(y,m,d), t, 3, false);
+    const rest = (7 - (first + days) % 7) % 7;
+    for (let i = 0; i < rest; i++) cells += '<div class="day empty"></div>';
+    label = `<small>${y}年</small>${m}月`;
+  } else {
+    const n = mode === '1w' ? 7 : 14;
+    for (let i = 0; i < n; i++) cells += dayCell(addDays(S.wStart, i), t, mode === '1w' ? 8 : 5, i === 0);
+    label = `<small>${y}年</small>${shortDate(S.wStart)}〜${shortDate(addDays(S.wStart, n - 1))}`;
   }
-  const rest = (7 - (first + days) % 7) % 7;
-  for (let i = 0; i < rest; i++) cells += '<div class="day empty"></div>';
+  const calMode = `<div class="calbar">${segHtml([['month','月'],['2w','2週間'],['1w','1週間']], mode, 'cal-mode')}<button class="btn small ghost" data-act="cal-today">今日</button></div>`;
   // 今日の献立
   const todays = (db.plan[t] || []).map(menuById).filter(Boolean).sort(byRole);
   const todayCard = `<div class="card"><div class="card-head"><b>今日</b><span>${fmtDate(t)}</span><button class="btn small sub" data-act="open-day" data-date="${t}">${todays.length ? '変更' : '決める'}</button></div>
@@ -729,7 +748,7 @@ function viewPlan(){
       <div class="top-inner"><span class="appname">おうち帳<span class="ver">${VERSION}</span></span></div>
       <div class="top-inner">
         <button class="iconbtn" data-act="month" data-d="-1" aria-label="前の月">${ICON.prev}</button>
-        <div class="monthlabel"><small>${y}年</small>${m}月</div>
+        <div class="monthlabel ${mode === 'month' ? '' : 'wk'}">${label}</div>
         <button class="iconbtn" data-act="month" data-d="1" aria-label="次の月">${ICON.next}</button>
       </div>
     </header>
@@ -737,7 +756,8 @@ function viewPlan(){
       ${todayCard}${reqCard}
       <div class="section-title">${m}月の旬<span class="cnt">${shun.length}品</span></div>
       <div class="shun">${shun.length ? shun.map(i => `<span class="chip">${esc(i.name)}</span>`).join('') : '<span class="hint">この月が旬の食材はまだ登録されていません</span>'}</div>
-      <div class="cal">${cells}</div>
+      ${calMode}
+      <div class="cal ${mode === 'month' ? '' : 'cal-' + mode}">${cells}</div>
       <p class="hint">日付をタップすると、旬や価格を見ながら献立を入れられます。左の色は<span style="color:var(--r-main)">主菜</span>・<span style="color:var(--r-side)">副菜</span>・<span style="color:var(--r-soup)">汁物</span>・<span style="color:var(--r-staple)">主食</span>です</p>
     </div>`;
 }
@@ -1307,7 +1327,17 @@ document.addEventListener('click', e => {
   const a = el.dataset.act, id = el.dataset.id;
   switch (a){
     case 'tab': S.tab = el.dataset.tab; if (S.tab === 'master') S.master = null; render(); window.scrollTo(0,0); break;
-    case 'month': { let m = S.m + Number(el.dataset.d), y = S.y; if (m < 1){ m = 12; y--; } if (m > 12){ m = 1; y++; } S.m = m; S.y = y; render(); break; }
+    case 'month': {
+      const mode = db.settings.calMode || 'month', d = Number(el.dataset.d);
+      if (mode !== 'month'){ S.wStart = addDays(S.wStart, d * (mode === '1w' ? 7 : 14)); render(); break; }
+      let m = S.m + d, y = S.y; if (m < 1){ m = 12; y--; } if (m > 12){ m = 1; y++; } S.m = m; S.y = y; render(); break;
+    }
+    case 'cal-mode': {
+      const v = el.dataset.v, t = todayStr(), cur = db.settings.calMode || 'month';
+      if (v !== 'month' && cur === 'month'){ const inView = +t.slice(0,4) === S.y && +t.slice(5,7) === S.m; S.wStart = weekStart(inView ? t : dstr(S.y, S.m, 1)); }
+      db.settings.calMode = v; localSave(); render(); break;
+    }
+    case 'cal-today': { const t = todayStr(); S.wStart = weekStart(t); S.y = +t.slice(0,4); S.m = +t.slice(5,7); render(); break; }
     case 'close-sheet': closeSheet(); break;
 
     case 'open-day': openDay(el.dataset.date); break;
