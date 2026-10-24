@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="おうち帳">
-<title>おうち帳 v0.9</title>
+<title>おうち帳 v0.10</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
@@ -179,7 +179,7 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 
 <script>
 'use strict';
-const VERSION = 'v0.9';
+const VERSION = 'v0.10';
 const KEY = 'ouchicho-data';
 const WD = ['日','月','火','水','木','金','土'];
 // 月ごとの季節色（画面のアクセント色）
@@ -393,7 +393,7 @@ function normalize(d){
   const plan = {};
   if (d.plan && typeof d.plan === 'object') for (const [k,v] of Object.entries(d.plan)) if (Array.isArray(v) && v.length) plan[k] = v.map(String);
   const stores = (Array.isArray(d.stores) ? d.stores : []).map(t => ({
-    id:String(t.id || uid()), name:String(t.name || ''), type:['super','drug','other'].includes(t.type) ? t.type : 'other', memo:String(t.memo || ''), updatedAt:t.updatedAt || Date.now()
+    id:String(t.id || uid()), name:String(t.name || ''), type:['super','drug','home','other'].includes(t.type) ? t.type : 'other', memo:String(t.memo || ''), updatedAt:t.updatedAt || Date.now()
   }));
   // v0.2以前の「お店の名前」をお店マスタに移す
   const storeIdByName = name => {
@@ -563,7 +563,7 @@ const catList = kind => kind === 'goods' ? db.goodsCats : kind === 'food' ? db.f
 const byRole = (a,b) => roleOrder(a.role) - roleOrder(b.role);
 const segHtml = (list, cur, act) => `<div class="seg">${list.map(([v,l]) => `<button class="${cur === v ? 'on' : ''}" data-act="${act}" data-v="${v}" aria-pressed="${cur === v}">${l}</button>`).join('')}</div>`;
 const storeName = id => { const t = storeById(id); return t ? t.name : ''; };
-const STORE_TYPES = [['super','スーパー'],['drug','ドラッグストア'],['other','その他']];
+const STORE_TYPES = [['super','スーパー'],['drug','ドラッグストア'],['home','ホームセンター'],['other','その他']];
 function storeOptions(selected, emptyLabel){
   return `<option value="">${emptyLabel}</option>` + STORE_TYPES.map(([v,l]) => {
     const list = db.stores.filter(t => t.type === v).sort((a,b) => byJa(a.name,b.name));
@@ -761,7 +761,7 @@ function viewMaster(){
     </div>
     <div class="section-title">買い物</div>
     <div class="list">
-      ${row('master-open', 'data-v="stores"', 'お店', `スーパー ${db.stores.filter(t => t.type === 'super').length}　ドラッグストア ${db.stores.filter(t => t.type === 'drug').length}　その他 ${db.stores.filter(t => t.type === 'other').length}`)}
+      ${row('master-open', 'data-v="stores"', 'お店', STORE_TYPES.map(([v,l]) => `${l} ${db.stores.filter(t => t.type === v).length}`).join('　'))}
     </div></div>`;
 }
 
