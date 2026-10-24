@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="おうち帳">
-<title>おうち帳 v0.12</title>
+<title>おうち帳 v0.13</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
@@ -228,7 +228,7 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 
 <script>
 'use strict';
-const VERSION = 'v0.12';
+const VERSION = 'v0.13';
 const KEY = 'ouchicho-data';
 const WD = ['日','月','火','水','木','金','土'];
 // 月ごとの季節色（画面のアクセント色）
@@ -388,7 +388,7 @@ function seed(){
   SEED_GOODS.forEach(([n,g]) => items.push(newItem(n,'goods',[], (goodsCats.find(c => c.name === g) || {}).id)));
   const categories = SEED_CATS.map(name => ({id:uid(), name}));
   const menus = SEED_MENUS.map(r => menuFromSeed(r, items, categories));
-  return {schema:1, items, menus, categories, goodsCats, foodCats, stores:[], plan:{}, prices:[], shopping:{}, requests:[], members:{}, settings:{lastStoreId:''}};
+  return {schema:1, items, menus, categories, goodsCats, foodCats, stores:[], plan:{}, prices:[], shoplist:[], requests:[], members:{}, settings:{lastStoreId:''}};
 }
 // 一般的なメニュー・食材・日用品のうち、まだ無いものだけ足す
 function addGeneral(){
@@ -469,7 +469,16 @@ function normalize(d){
   const requests = (Array.isArray(d.requests) ? d.requests : []).filter(r => r && r.menuId).map(r => ({id:String(r.id || uid()), menuId:String(r.menuId), by:String(r.by || ''), ts:Number(r.ts) || Date.now()}));
   const members = {};
   if (d.members && typeof d.members === 'object') for (const [k,v] of Object.entries(d.members)) if (v) members[k] = String(v);
-  return {schema:1, items, menus, categories, goodsCats, foodCats, stores, plan, prices, shopping, requests, members, settings:{lastStoreId}};
+  // 買い物リストはひとつのリスト。v0.12までの週ごとのリストからは、手で足した未購入の品目だけ移す（idを固定して家族の端末どうしで重複しないように）
+  let shoplist;
+  if (Array.isArray(d.shoplist)) shoplist = d.shoplist.filter(e => e && e.itemId).map(e => ({id:String(e.id || uid()), itemId:String(e.itemId), note:String(e.note || ''),
+    storeId:String(e.storeId || ''), by:String(e.by || ''), from:String(e.from || ''), checked:!!e.checked, ts:Number(e.ts) || Date.now()}));
+  else {
+    const seen = new Set(); shoplist = [];
+    Object.values(shopping).forEach(w => w.extra.forEach(id => { if (seen.has(id) || w.checked[id] || w.hidden.includes(id)) return; seen.add(id);
+      shoplist.push({id:'m-' + id, itemId:id, note:w.notes[id] || '', storeId:w.store[id] || '', by:w.by[id] || '', from:'', checked:false, ts:0}); }));
+  }
+  return {schema:1, items, menus, categories, goodsCats, foodCats, stores, plan, prices, shoplist, requests, members, settings:{lastStoreId}};
 }
 function load(){
   try { const raw = localStorage.getItem(KEY); return raw ? normalize(JSON.parse(raw)) : null; }
@@ -491,7 +500,7 @@ const FB_CONFIG = {
   appId: "1:208503156435:web:68baea92ecbaa0bf706e26"
 };
 const HOUSE = 'households/ouchi';
-const SYNC_COLS = ['items','menus','stores','prices','plan','shopping','requests','meta'];
+const SYNC_COLS = ['items','menus','stores','prices','plan','shoplist','shopping','requests','meta'];  // shoppingは古い版の移行用に読むだけ
 let fs = null, auth = null, fbUser = null, synced = null, syncReady = false, unsubs = [], pendingWrites = 0, pendingRender = false;
 
 // キーの順番に左右されない比較用の文字列
@@ -510,7 +519,7 @@ function toDocs(d){
   d.requests.forEach(x => m['requests/' + x.id] = x);
   m['meta/members'] = {map:d.members};
   for (const [k,v] of Object.entries(d.plan)) m['plan/' + k] = {ids:v};
-  for (const [k,v] of Object.entries(d.shopping)) m['shopping/' + k] = v;
+  d.shoplist.forEach(x => m['shoplist/' + x.id] = x);
   m['meta/categories'] = {list:d.categories};
   m['meta/goodsCats'] = {list:d.goodsCats};
   m['meta/foodCats'] = {list:d.foodCats};
@@ -522,6 +531,7 @@ function fromDocs(map){
     const [col, id] = path.split('/'), v = JSON.parse(json);
     if (col === 'plan') raw.plan[id] = v.ids;
     else if (col === 'shopping') raw.shopping[id] = v;
+    else if (col === 'shoplist'){ (raw.shoplist = raw.shoplist || []).push(v); }
     else if (col === 'meta'){ if (id === 'categories') raw.categories = v.list || []; if (id === 'goodsCats') raw.goodsCats = v.list || []; if (id === 'foodCats') raw.foodCats = v.list || []; if (id === 'members') raw.members = v.map || {}; }
     else if (raw[col]) raw[col].push(v);
   }
@@ -651,7 +661,6 @@ function itemGuide(itemId){
 }
 function addDays(ds, n){ const d = new Date(ds + 'T00:00:00'); d.setDate(d.getDate() + n); return dstr(d.getFullYear(), d.getMonth()+1, d.getDate()); }
 function weekStart(ds){ const d = new Date(ds + 'T00:00:00'); return addDays(ds, -d.getDay()); }
-function shopWeek(ws){ return db.shopping[ws] || (db.shopping[ws] = {checked:{}, extra:[], hidden:[], notes:{}, store:{}, by:{}}); }
 // 家族の名前（設定で各自が登録）
 const myUid = () => fbUser ? fbUser.uid : 'local';
 const memberName = uid => db.members[uid] || (uid === myUid() ? '自分' : '家族');
@@ -671,7 +680,7 @@ const judgeBadge = j => j === '安い' ? '<span class="badge cheap">安い</span
 
 // ---------- 状態 ----------
 const now = new Date();
-const S = {showDone:false, reqQ:'', reqRole:'main', shopEdit:null, tab:'plan', y:now.getFullYear(), m:now.getMonth()+1, master:null, menuCat:'all', dayCat:'all', menuRole:'all', dayRole:'all', gcatF:'all', menuQ:'', menuF:'all', itemQ:'', itemF:'all', dayQ:'', pickQ:'', shopQ:'', day:null, priceItem:null, week:null};
+const S = {shopMode:false, fpStart:null, fpDays:7, fpSel:null, showDone:false, reqQ:'', reqRole:'main', shopEdit:null, tab:'plan', y:now.getFullYear(), m:now.getMonth()+1, master:null, menuCat:'all', dayCat:'all', menuRole:'all', dayRole:'all', gcatF:'all', menuQ:'', menuF:'all', itemQ:'', itemF:'all', dayQ:'', pickQ:'', shopQ:'', day:null, priceItem:null, week:null};
 let mdraft = null, idraft = null;
 
 // ---------- 画面 ----------
@@ -856,62 +865,48 @@ function viewPrices(){
     <p class="hint">同じ品目を2回以上記録すると、平均と比べた「安い・普通・高い」が出て、献立の候補順にも反映されます</p></div>`;
 }
 
-function shoppingData(ws){
-  const uses = new Map();
-  for (let i = 0; i < 7; i++){
-    const ds = addDays(ws, i), wd = WD[new Date(ds + 'T00:00:00').getDay()];
-    (db.plan[ds] || []).map(menuById).filter(Boolean).forEach(mn => mn.itemIds.forEach(id => {
-      if (!itemById(id)) return;
-      if (!uses.has(id)) uses.set(id, []);
-      const u = uses.get(id), label = `${wd} ${mn.name}${mn.qty && mn.qty[id] ? ' ' + mn.qty[id] : ''}`;
-      if (!u.includes(label)) u.push(label);
-    }));
-  }
-  const w = db.shopping[ws] || {checked:{}, extra:[], hidden:[], notes:{}, store:{}, by:{}};
-  const rows = [...uses.keys()].filter(id => !w.hidden.includes(id)).map(id => ({id, uses:uses.get(id), extra:false}));
-  w.extra.forEach(id => { if (itemById(id) && !uses.has(id) && !w.hidden.includes(id)) rows.push({id, uses:[], extra:true}); });
-  const list = rows.map(r => {
-    const it = itemById(r.id), g = itemGuide(r.id);
+function shopRows(){
+  return db.shoplist.filter(e => itemById(e.itemId)).map(e => {
+    const it = itemById(e.itemId), g = itemGuide(e.itemId);
     const auto = (it.favStoreId && storeById(it.favStoreId)) ? it.favStoreId : (g && g.cheapest ? g.cheapest.storeId : '');
-    const storeId = w.store[r.id] && storeById(w.store[r.id]) ? w.store[r.id] : auto;
-    return {...r, it, g, storeId, note:w.notes[r.id] || '', by:w.by[r.id] || '', done:!!w.checked[r.id]};
+    return {e, it, g, storeId:e.storeId && storeById(e.storeId) ? e.storeId : auto};
   });
-  list.hiddenCount = w.hidden.filter(id => uses.has(id)).length;
-  return list;
 }
 function viewShop(){
-  if (!S.week) S.week = weekStart(todayStr());
-  const ws = S.week, we = addDays(ws, 6);
-  const rows = shoppingData(ws), todo = rows.filter(r => !r.done), done = rows.filter(r => r.done);
+  const rows = shopRows(), todo = rows.filter(r => !r.e.checked), done = rows.filter(r => r.e.checked), edit = S.shopMode;
   const est = todo.filter(r => r.g).reduce((s, r) => s + r.g.typical, 0);
   const rowHtml = r => {
     const sub = [];
-    if (r.note) sub.push(esc(r.note));
-    sub.push(r.uses.length ? esc(r.uses.join('、')) : (r.by ? `${esc(memberName(r.by))}が追加` : '手動で追加'));
-    if (r.g && !r.done) sub.push(r.g.target ? `${yen(r.g.target)}以下なら買い` : `前回 ${yen(r.g.st.latest.price)}`);
-    return `<div class="row ${r.done ? 'done' : ''}"><button class="check ${r.done ? 'on' : ''}" data-act="shop-check" data-id="${r.id}" aria-pressed="${r.done}" aria-label="${esc(r.it.name)}を買った">${ICON.check}</button>
-      <button class="main" data-act="shop-edit" data-id="${r.id}" style="border:0;background:transparent;text-align:left;padding:0;color:inherit;font:inherit"><div class="name">${esc(r.it.name)}${r.g && !r.done ? judgeBadge(r.g.st.judge) : ''}</div><div class="sub">${sub.join('　')}</div></button>
-      ${chevron()}</div>`;
+    if (r.e.note) sub.push(esc(r.e.note));
+    sub.push(r.e.from ? esc(r.e.from) : r.e.by ? `${esc(memberName(r.e.by))}が追加` : '手動で追加');
+    if (r.g && !r.e.checked) sub.push(r.g.target ? `${yen(r.g.target)}以下なら買い` : `前回 ${yen(r.g.st.latest.price)}`);
+    return `<div class="row ${r.e.checked ? 'done' : ''}">
+      ${edit ? `<button class="iconbtn" data-act="shop-del" data-id="${r.e.id}" aria-label="${esc(r.it.name)}を消す" style="color:var(--bad)">${ICON.minus}</button>`
+             : `<button class="check ${r.e.checked ? 'on' : ''}" data-act="shop-check" data-id="${r.e.id}" aria-pressed="${r.e.checked}" aria-label="${esc(r.it.name)}を買った">${ICON.check}</button>`}
+      <button class="main" data-act="shop-edit" data-id="${r.e.id}" style="border:0;background:transparent;text-align:left;padding:0;color:inherit;font:inherit"><div class="name">${esc(r.it.name)}${r.g && !r.e.checked ? judgeBadge(r.g.st.judge) : ''}</div><div class="sub">${sub.join('　')}</div></button>
+      ${edit ? '' : chevron()}</div>`;
   };
   const keys = [...new Set(todo.map(r => r.storeId))].sort((a,b) => (a ? 0 : 1) - (b ? 0 : 1) || byJa(storeName(a), storeName(b)));
   const groups = keys.map(k => {
     const g = todo.filter(r => r.storeId === k).sort((a,b) => byJa(a.it.name, b.it.name));
     return `<div class="section-title">${storeById(k) ? esc(storeName(k)) : 'お店未定'}<span class="cnt">${g.length}品</span></div><div class="list">${g.map(rowHtml).join('')}</div>`;
   }).join('');
-  const doneHtml = done.length ? `<div class="section-title">買ったもの<span class="cnt">${done.length}品</span><button class="btn ghost small more" data-act="shop-showdone">${S.showDone ? 'たたむ' : 'ひらく'}</button></div>
-    ${S.showDone ? `<div class="list">${done.sort((a,b) => byJa(a.it.name, b.it.name)).map(rowHtml).join('')}</div>` : ''}` : '';
+  const showDone = S.showDone || edit;
+  const doneHtml = done.length ? `<div class="section-title">買ったもの<span class="cnt">${done.length}品</span>${edit ? '' : `<button class="btn ghost small more" data-act="shop-showdone">${S.showDone ? 'たたむ' : 'ひらく'}</button>`}</div>
+    ${showDone ? `<div class="list">${done.sort((a,b) => byJa(a.it.name, b.it.name)).map(rowHtml).join('')}</div>` : ''}` : '';
   const pct = rows.length ? Math.round(done.length / rows.length * 100) : 0;
-  const tools = (done.length ? '<button class="btn small sub" data-act="shop-tidy">買ったものを片付ける</button>' : '') + (rows.hiddenCount ? `<button class="btn small ghost" data-act="shop-unhide">外した${rows.hiddenCount}品を戻す</button>` : '');
-  return `<header class="top"><div class="top-inner"><h1>買い物</h1><button class="btn" data-act="shop-add">追加</button></div>
-      <div class="top-inner"><button class="iconbtn" data-act="week" data-d="-7" aria-label="前の週">${ICON.prev}</button>
-        <div class="weeklabel">${shortDate(ws)}（日）〜 ${shortDate(we)}（土）</div>
-        <button class="iconbtn" data-act="week" data-d="7" aria-label="次の週">${ICON.next}</button></div></header>
+  const tools = edit
+    ? (rows.length ? '<button class="btn small danger" data-act="shop-clear">リストを全部消す</button>' : '')
+    : '<button class="btn small sub" data-act="shop-plan">献立から材料を入れる</button>' + (done.length ? '<button class="btn small ghost" data-act="shop-tidy">買ったものを片付ける</button>' : '');
+  return `<header class="top"><div class="top-inner"><h1>買い物</h1><div style="display:flex;gap:6px">
+      ${rows.length ? `<button class="btn ${edit ? '' : 'sub'}" data-act="shop-mode">${edit ? '完了' : '編集'}</button>` : ''}${edit ? '' : '<button class="btn" data-act="shop-add">追加</button>'}</div></div></header>
     <div class="wrap">
-      ${rows.length ? `<div class="card"><div class="sum"><b>残り ${todo.length}品</b><span>${est ? `目安 約${yen(est)}` : '価格を記録すると合計の目安が出ます'}</span></div>
-          <div class="progress"><i style="width:${pct}%"></i></div>${tools ? `<div class="toolrow">${tools}</div>` : ''}</div>
-        ${groups}${doneHtml}`
-        : `<div class="card"><div class="empty-msg" style="padding:8px">${rows.hiddenCount ? 'リストは空です。外した品目は下のボタンで戻せます' : 'この週の献立がまだありません。献立を入れると材料がここに並びます。日用品などは右上の「追加」から入れられます'}</div>${tools ? `<div class="toolrow">${tools}</div>` : ''}</div>`}
-      <p class="hint">品目をタップすると、メモやお店の変更、リストから外すことができます</p>
+      <div class="card">${rows.length ? `<div class="sum"><b>残り ${todo.length}品</b><span>${est ? `目安 約${yen(est)}` : '価格を記録すると合計の目安が出ます'}</span></div>
+          <div class="progress"><i style="width:${pct}%"></i></div>`
+        : '<div class="empty-msg" style="padding:6px">リストは空です。右上の「追加」や「献立から材料を入れる」で品目を入れられます</div>'}
+        <div class="toolrow">${tools}</div></div>
+      ${groups}${doneHtml}
+      <p class="hint">${edit ? '赤いボタンで1品ずつ消せます。終わったら「完了」' : '品目をタップすると、メモやお店の変更、削除ができます'}</p>
     </div>`;
 }
 
@@ -1092,14 +1087,45 @@ function renderReqPick(){
 }
 // 買い物リストの品目を編集
 function openShopEdit(id){
-  const r = shoppingData(S.week).find(x => x.id === id); if (!r) return;
+  const e = db.shoplist.find(x => x.id === id), it = e && itemById(e.itemId); if (!it) return;
   S.shopEdit = id;
-  const w = db.shopping[S.week];
-  openSheet(sheetHead(esc(r.it.name)) + `<div class="sheet-body">
-    ${r.uses.length ? `<p class="hint">${esc(r.uses.join('、'))}</p>` : ''}
-    <label class="field"><span class="lbl">メモ（数や銘柄など）</span><input class="input" id="seNote" value="${esc(r.note)}" placeholder="例：2袋、特売なら"></label>
-    <label class="field"><span class="lbl">買うお店</span><select class="input" id="seStore">${storeOptions(w && w.store[id] || '', '自動で決める')}</select></label>
-    <div class="actions"><button class="btn danger" data-act="shop-hide">リストから外す</button><button class="btn" data-act="shop-save">保存</button></div></div>`);
+  openSheet(sheetHead(esc(it.name)) + `<div class="sheet-body">
+    ${e.from ? `<p class="hint">${esc(e.from)}</p>` : ''}
+    <label class="field"><span class="lbl">メモ（数や銘柄など）</span><input class="input" id="seNote" value="${esc(e.note)}" placeholder="例：2袋、特売なら"></label>
+    <label class="field"><span class="lbl">買うお店</span><select class="input" id="seStore">${storeOptions(e.storeId, '自動で決める')}</select></label>
+    <div class="actions"><button class="btn danger" data-act="shop-del" data-id="${id}">削除</button><button class="btn" data-act="shop-save">保存</button></div></div>`);
+}
+// 献立から材料をまとめて入れる（入れるかどうかは自分で選ぶ）
+function openShopPlan(){
+  S.fpStart = todayStr(); S.fpDays = 7; S.fpSel = null;
+  openSheet(sheetHead('献立から材料を入れる') + `<div class="sheet-body">
+    <div class="pair"><label class="field"><span class="lbl">いつから</span><input class="input" type="date" data-ch="fp-start" value="${S.fpStart}"></label>
+      <div class="field"><span class="lbl">何日分</span><div id="fpDays"></div></div></div>
+    <div id="fpList"></div></div>`);
+  renderShopPlan();
+}
+function planIngredients(){
+  const map = new Map();
+  for (let i = 0; i < S.fpDays; i++){
+    const ds = addDays(S.fpStart, i), wd = WD[new Date(ds + 'T00:00:00').getDay()];
+    (db.plan[ds] || []).map(menuById).filter(Boolean).forEach(mn => mn.itemIds.forEach(id => {
+      if (!itemById(id)) return;
+      if (!map.has(id)) map.set(id, []);
+      map.get(id).push(`${shortDate(ds)}${wd} ${mn.name}${mn.qty && mn.qty[id] ? ' ' + mn.qty[id] : ''}`);
+    }));
+  }
+  return map;
+}
+function renderShopPlan(){
+  $('#fpDays').innerHTML = segHtml([[3,'3日'],[7,'1週間'],[14,'2週間']].map(([v,l]) => [String(v), l]), String(S.fpDays), 'fp-days');
+  const map = planIngredients(), inList = new Set(db.shoplist.filter(e => !e.checked).map(e => e.itemId));
+  if (!S.fpSel) S.fpSel = new Set([...map.keys()].filter(id => !inList.has(id)));
+  const ids = [...map.keys()].sort((a,b) => byJa(itemById(a).name, itemById(b).name));
+  $('#fpList').innerHTML = ids.length ? `<div class="section-title">材料<span class="cnt">${ids.length}品（入れるものにチェック）</span></div>
+    <div class="list">${ids.map(id => { const on = S.fpSel.has(id); return `<div class="row"><button class="check ${on ? 'on' : ''}" data-act="fp-toggle" data-id="${id}" aria-pressed="${on}" aria-label="${esc(itemById(id).name)}を入れる">${ICON.check}</button>
+      <div class="main"><div class="name">${esc(itemById(id).name)}${inList.has(id) ? '<span class="badge">リストにある</span>' : ''}</div><div class="sub">${esc(map.get(id).join('、'))}</div></div></div>`; }).join('')}</div>
+    <div class="actions"><button class="btn" data-act="fp-add" ${S.fpSel.size ? '' : 'disabled'}>${S.fpSel.size}品をリストに入れる</button></div>`
+    : '<div class="card"><div class="empty-msg" style="padding:6px">この期間の献立がまだありません</div></div>';
 }
 
 // 買い物リストに品目を追加
@@ -1110,7 +1136,7 @@ function openShopAdd(){
   renderShopPick();
 }
 function renderShopPick(){
-  const ws = S.week, inList = new Set(shoppingData(ws).map(r => r.id)), q = S.shopQ.trim();
+  const inList = new Set(db.shoplist.filter(e => !e.checked).map(e => e.itemId)), q = S.shopQ.trim();
   $('#shopPick').innerHTML = [['goods','日用品'],['food','食材']].map(([c,l]) => {
     const list = db.items.filter(i => i.cat === c && !inList.has(i.id) && (!q || i.name.includes(q))).sort((a,b) => byJa(a.name,b.name));
     return `<div class="section-title">${l}</div><div class="chips">${list.length ? list.map(i => `<button class="chipbtn" data-act="shop-pick" data-id="${i.id}">${esc(i.name)}</button>`).join('') : '<span class="hint" style="margin:0">ありません</span>'}</div>`;
@@ -1367,31 +1393,45 @@ document.addEventListener('click', e => {
       db.prices = db.prices.filter(p => p.id !== id); save(); render(); renderPriceHistory(); break;
     }
 
-    case 'week': S.week = addDays(S.week, Number(el.dataset.d)); render(); break;
-    case 'shop-check': { const w = shopWeek(S.week); if (w.checked[id]) delete w.checked[id]; else w.checked[id] = true; save(); render(); break; }
+    case 'shop-check': { const e = db.shoplist.find(x => x.id === id); if (e){ e.checked = !e.checked; save(); render(); } break; }
     case 'shop-add': openShopAdd(); break;
-    case 'shop-pick': { const w = shopWeek(S.week); if (!w.extra.includes(id)) w.extra.push(id); w.hidden = w.hidden.filter(x => x !== id); w.by[id] = myUid(); save(); renderShopPick(); render(); toast(`${itemById(id).name}を追加しました`); break; }
+    case 'shop-pick': {
+      if (db.shoplist.some(e => e.itemId === id && !e.checked)){ toast('もうリストに入っています'); break; }
+      db.shoplist.push({id:uid(), itemId:id, note:'', storeId:'', by:myUid(), from:'', checked:false, ts:Date.now()});
+      save(); renderShopPick(); render(); toast(`${itemById(id).name}を追加しました`); break;
+    }
     case 'shop-edit': openShopEdit(id); break;
     case 'shop-save': {
-      const w = shopWeek(S.week), k = S.shopEdit, note = $('#seNote').value.trim(), st = $('#seStore').value;
-      if (note) w.notes[k] = note; else delete w.notes[k];
-      if (st) w.store[k] = st; else delete w.store[k];
+      const e = db.shoplist.find(x => x.id === S.shopEdit); if (!e) break;
+      e.note = $('#seNote').value.trim(); e.storeId = $('#seStore').value;
       save(); closeSheet(); render(); toast('保存しました'); break;
     }
-    case 'shop-hide': {
-      const w = shopWeek(S.week), k = S.shopEdit;
-      if (w.extra.includes(k)){ w.extra = w.extra.filter(x => x !== k); delete w.by[k]; }
-      else if (!w.hidden.includes(k)) w.hidden.push(k);  // 献立から来た品目は「外した」扱いにする
-      delete w.checked[k]; delete w.notes[k]; delete w.store[k];
-      save(); closeSheet(); render(); toast(`${itemById(k).name}をリストから外しました`); break;
+    case 'shop-del': {
+      const e = db.shoplist.find(x => x.id === id); if (!e) break;
+      db.shoplist = db.shoplist.filter(x => x.id !== id);
+      save(); if ($('#seNote')) closeSheet(); render(); toast(`${(itemById(e.itemId) || {}).name || ''}を削除しました`); break;
+    }
+    case 'shop-mode': S.shopMode = !S.shopMode; render(); break;
+    case 'shop-clear': {
+      if (!confirm(`買い物リストの${db.shoplist.length}品を全部消しますか？${fbUser ? '\n家族の画面からも消えます。' : ''}`)) break;
+      db.shoplist = []; S.shopMode = false; save(); render(); toast('リストを空にしました'); break;
     }
     case 'shop-tidy': {
-      const w = shopWeek(S.week), done = Object.keys(w.checked);
-      if (!done.length || !confirm(`買ったもの${done.length}品をリストから片付けますか？`)) break;
-      done.forEach(k => { if (w.extra.includes(k)){ w.extra = w.extra.filter(x => x !== k); delete w.by[k]; } else if (!w.hidden.includes(k)) w.hidden.push(k); delete w.notes[k]; delete w.store[k]; });
-      w.checked = {}; save(); render(); toast('片付けました'); break;
+      const n = db.shoplist.filter(e => e.checked).length;
+      if (!n || !confirm(`買ったもの${n}品をリストから消しますか？`)) break;
+      db.shoplist = db.shoplist.filter(e => !e.checked); save(); render(); toast('片付けました'); break;
     }
-    case 'shop-unhide': { const w = shopWeek(S.week); w.hidden = []; save(); render(); toast('外した品目を戻しました'); break; }
+    case 'shop-plan': openShopPlan(); break;
+    case 'fp-days': S.fpDays = Number(el.dataset.v); S.fpSel = null; renderShopPlan(); break;
+    case 'fp-toggle': { if (S.fpSel.has(id)) S.fpSel.delete(id); else S.fpSel.add(id); renderShopPlan(); break; }
+    case 'fp-add': {
+      const map = planIngredients(); let n = 0;
+      S.fpSel.forEach(itemId => {
+        if (db.shoplist.some(e => e.itemId === itemId && !e.checked)) return;
+        db.shoplist.push({id:uid(), itemId, note:'', storeId:'', by:myUid(), from:(map.get(itemId) || []).join('、'), checked:false, ts:Date.now()}); n++;
+      });
+      save(); closeSheet(); render(); toast(n ? `${n}品をリストに入れました` : 'すでにリストに入っていました'); break;
+    }
     case 'shop-showdone': S.showDone = !S.showDone; render(); break;
     case 'req-list': openReqList(); break;
     case 'req-pick': openReqPick(); break;
@@ -1451,6 +1491,7 @@ document.addEventListener('input', e => {
 
 document.addEventListener('change', e => {
   if (e.target.dataset.ch === 'i-store' && idraft) idraft.favStoreId = e.target.value;
+  if (e.target.dataset.ch === 'fp-start' && e.target.value){ S.fpStart = e.target.value; S.fpSel = null; renderShopPlan(); }
   if (e.target.dataset.ch === 'my-name'){ const v = e.target.value.trim(); if (v) db.members[myUid()] = v; else delete db.members[myUid()]; save(); toast('名前を保存しました'); }
   if (e.target.dataset.ch === 'req-date'){
     const r = db.requests.find(x => x.id === e.target.dataset.id), ds = e.target.value;
