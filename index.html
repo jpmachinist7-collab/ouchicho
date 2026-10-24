@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="おうち帳">
-<title>おうち帳 v0.16</title>
+<title>おうち帳 v0.17</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
@@ -244,7 +244,7 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 
 <script>
 'use strict';
-const VERSION = 'v0.16';
+const VERSION = 'v0.17';
 const KEY = 'ouchicho-data';
 const WD = ['日','月','火','水','木','金','土'];
 // 月ごとの季節色（画面のアクセント色）
@@ -985,10 +985,12 @@ function renderDay(){
       `<div class="row"><span class="role r-${mn.role}"><span class="dot"></span>${roleName(mn.role)}</span><div class="main"><div class="name">${esc(mn.name)}</div><div class="sub">${esc(ingNames(mn))}</div></div><button class="iconbtn" data-act="day-remove" data-idx="${idx}" aria-label="${esc(mn.name)}を外す">${ICON.minus}</button></div>`).join('')
     : '<div class="empty-msg">まだ決まっていません。下の候補をタップして入れてください</div>';
   $('#dayRoles').innerHTML = segHtml([...ROLES, ['all','すべて']], S.dayRole, 'day-role');
-  if (!catChoices().some(([v]) => v === S.dayCat)) S.dayCat = 'all';
-  $('#dayCats').innerHTML = filterChips(catChoices(), S.dayCat, 'day-cat');
+  // 献立の候補：「定番」と種類（肉・魚…）で絞れる
+  const dayChoices = [['all','すべて'], ['teiban','定番'], ...catChoices().slice(1)];
+  if (!dayChoices.some(([v]) => v === S.dayCat)) S.dayCat = 'all';
+  $('#dayCats').innerHTML = filterChips(dayChoices, S.dayCat, 'day-cat');
   const reqIds = new Set(openRequests().map(r => r.menuId));
-  const list = db.menus.filter(mn => (S.dayRole === 'all' || mn.role === S.dayRole) && inCat(mn, S.dayCat) && (!q || mn.name.includes(q))).map(mn => ({mn, req:reqIds.has(mn.id), ...menuInfo(mn, mon)}))
+  const list = db.menus.filter(mn => (S.dayRole === 'all' || mn.role === S.dayRole) && (S.dayCat === 'teiban' ? mn.teiban : inCat(mn, S.dayCat)) && (!q || mn.name.includes(q))).map(mn => ({mn, req:reqIds.has(mn.id), ...menuInfo(mn, mon)}))
     .sort((a,b) => (b.req - a.req) || b.score - a.score || byJa(a.mn.name, b.mn.name));
   $('#dayCands').innerHTML = list.length ? list.map(x => `<button class="row" data-act="day-add" data-id="${x.mn.id}"><div class="main"><div class="name">${esc(x.mn.name)}${x.req ? '<span class="badge req">リクエスト</span>' : ''}${badges(x)}</div><div class="sub">${S.dayRole === 'all' ? roleName(x.mn.role) + '　' : ''}${esc(ingNames(x.mn))}</div></div>${ids.includes(x.mn.id) ? '<span class="badge">入れ済み</span>' : ''}</button>`).join('')
     : `<div class="empty-msg">${q || S.dayCat !== 'all' || S.dayRole !== 'all' ? '条件に合うメニューがありません' : 'メニューがありません。メニュー画面から登録できます'}</div>`;
