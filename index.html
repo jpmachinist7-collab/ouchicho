@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="おうち帳">
-<title>おうち帳 v0.7</title>
+<title>おうち帳 v0.8</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
@@ -179,7 +179,7 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 
 <script>
 'use strict';
-const VERSION = 'v0.7';
+const VERSION = 'v0.8';
 const KEY = 'ouchicho-data';
 const WD = ['日','月','火','水','木','金','土'];
 // 月ごとの季節色（画面のアクセント色）
@@ -198,6 +198,18 @@ const SEED_FOODS = [
   ['豚こま',[]],['鶏もも',[]],['牛こま',[]],['ひき肉',[]],['卵',[]],['豆腐',[]],['油揚げ',[]]
 ];
 const SEED_GCATS = ['キッチン','洗濯','トイレ','お風呂・洗面','掃除','その他'];
+// 食材のカテゴリ。idを固定にして、家族のどの端末で移行しても同じ結果になるようにする
+const SEED_FCATS = [
+  ['fc1','野菜',['白菜','大根','キャベツ','ほうれん草','小松菜','春菊','長ねぎ','ブロッコリー','れんこん','ごぼう','里芋','さつまいも','かぼちゃ','なす','トマト','きゅうり','ピーマン','ゴーヤ','オクラ','とうもろこし','たけのこ','アスパラガス','玉ねぎ','にんじん','じゃがいも','もやし']],
+  ['fc2','きのこ',['生しいたけ','しめじ']],
+  ['fc3','肉',['豚こま','鶏もも','牛こま','ひき肉']],
+  ['fc4','魚介',['さんま','鮭','ぶり','さば','あじ','かつお','たら','牡蠣']],
+  ['fc5','卵・大豆製品',['卵','豆腐','油揚げ']],
+  ['fc6','麺・米・粉',['焼きそば麺']],
+  ['fc7','その他',[]]
+];
+const seedFoodCats = () => SEED_FCATS.map(([id, name]) => ({id, name}));
+const seedFcatOf = name => (SEED_FCATS.find(r => r[2].includes(name)) || [''])[0];
 const SEED_GOODS = [
   ['食器用洗剤','キッチン'],['スポンジ','キッチン'],['ラップ','キッチン'],['アルミホイル','キッチン'],['キッチンペーパー','キッチン'],['ゴミ袋','キッチン'],
   ['洗濯洗剤','洗濯'],['柔軟剤','洗濯'],['トイレットペーパー','トイレ'],['トイレ用洗剤','トイレ'],
@@ -318,18 +330,21 @@ function menuFromSeed(row, items, categories){
 function seed(){
   const items = [];
   const goodsCats = SEED_GCATS.map(name => ({id:uid(), name}));
-  SEED_FOODS.forEach(([n,s]) => items.push(newItem(n,'food',s)));
+  const foodCats = seedFoodCats();
+  SEED_FOODS.forEach(([n,s]) => items.push(newItem(n,'food',s, seedFcatOf(n))));
   SEED_GOODS.forEach(([n,g]) => items.push(newItem(n,'goods',[], (goodsCats.find(c => c.name === g) || {}).id)));
   const categories = SEED_CATS.map(name => ({id:uid(), name}));
   const menus = SEED_MENUS.map(r => menuFromSeed(r, items, categories));
-  return {schema:1, items, menus, categories, goodsCats, stores:[], plan:{}, prices:[], shopping:{}, settings:{lastStoreId:''}};
+  return {schema:1, items, menus, categories, goodsCats, foodCats, stores:[], plan:{}, prices:[], shopping:{}, settings:{lastStoreId:''}};
 }
 // 一般的なメニュー・食材・日用品のうち、まだ無いものだけ足す
 function addGeneral(){
   let nItems = 0, nMenus = 0;
   SEED_CATS.forEach(name => { if (!db.categories.some(c => c.name === name)) db.categories.push({id:uid(), name}); });
   SEED_GCATS.forEach(name => { if (!db.goodsCats.some(c => c.name === name)) db.goodsCats.push({id:uid(), name}); });
-  SEED_FOODS.forEach(([n,s]) => { if (!db.items.some(i => i.name === n && i.cat === 'food')){ db.items.push(newItem(n,'food',s)); nItems++; } });
+  SEED_FCATS.forEach(([id, name]) => { if (!db.foodCats.some(c => c.name === name)) db.foodCats.push({id:db.foodCats.some(c => c.id === id) ? uid() : id, name}); });
+  const fcatIdOf = n => { const r = SEED_FCATS.find(x => x[2].includes(n)); const c = r && db.foodCats.find(x => x.name === r[1]); return c ? c.id : ''; };
+  SEED_FOODS.forEach(([n,s]) => { if (!db.items.some(i => i.name === n && i.cat === 'food')){ db.items.push(newItem(n,'food',s, fcatIdOf(n))); nItems++; } });
   SEED_GOODS.forEach(([n,g]) => { if (!db.items.some(i => i.name === n && i.cat === 'goods')){ db.items.push(newItem(n,'goods',[], (db.goodsCats.find(c => c.name === g) || {}).id)); nItems++; } });
   SEED_MENUS.forEach(r => { if (!db.menus.some(m => m.name === r[0])){ db.menus.push(menuFromSeed(r, db.items, db.categories)); nMenus++; } });
   return {nItems, nMenus};
@@ -347,6 +362,9 @@ function normalize(d){
     const row = SEED_GOODS.find(r => r[0] === i.name), c = row && goodsCats.find(x => x.name === row[1]);
     if (c) i.gcatId = c.id;
   });
+  // v0.7以前：食材のカテゴリを用意し、一般的な食材は振り分ける
+  const foodCats = Array.isArray(d.foodCats) ? d.foodCats.filter(c => c && c.name).map(c => ({id:String(c.id || uid()), name:String(c.name)})) : seedFoodCats();
+  if (!Array.isArray(d.foodCats)) items.forEach(i => { if (i.cat === 'food' && !i.gcatId) i.gcatId = seedFcatOf(i.name); });
   const freshCats = !Array.isArray(d.categories);
   const categories = freshCats ? SEED_CATS.map(name => ({id:uid(), name})) : d.categories.filter(c => c && c.name).map(c => ({id:String(c.id || uid()), name:String(c.name)}));
   const menus = (Array.isArray(d.menus) ? d.menus : []).map(m => {
@@ -389,7 +407,7 @@ function normalize(d){
     if (v.checked && typeof v.checked === 'object') for (const [id,on] of Object.entries(v.checked)) if (on) checked[id] = true;
     shopping[k] = {checked, extra:Array.isArray(v.extra) ? v.extra.map(String) : []};
   }
-  return {schema:1, items, menus, categories, goodsCats, stores, plan, prices, shopping, settings:{lastStoreId}};
+  return {schema:1, items, menus, categories, goodsCats, foodCats, stores, plan, prices, shopping, settings:{lastStoreId}};
 }
 function load(){
   try { const raw = localStorage.getItem(KEY); return raw ? normalize(JSON.parse(raw)) : null; }
@@ -431,6 +449,7 @@ function toDocs(d){
   for (const [k,v] of Object.entries(d.shopping)) m['shopping/' + k] = v;
   m['meta/categories'] = {list:d.categories};
   m['meta/goodsCats'] = {list:d.goodsCats};
+  m['meta/foodCats'] = {list:d.foodCats};
   return m;
 }
 function fromDocs(map){
@@ -439,7 +458,7 @@ function fromDocs(map){
     const [col, id] = path.split('/'), v = JSON.parse(json);
     if (col === 'plan') raw.plan[id] = v.ids;
     else if (col === 'shopping') raw.shopping[id] = v;
-    else if (col === 'meta'){ if (id === 'categories') raw.categories = v.list || []; if (id === 'goodsCats') raw.goodsCats = v.list || []; }
+    else if (col === 'meta'){ if (id === 'categories') raw.categories = v.list || []; if (id === 'goodsCats') raw.goodsCats = v.list || []; if (id === 'foodCats') raw.foodCats = v.list || []; }
     else if (raw[col]) raw[col].push(v);
   }
   return normalize(raw);
@@ -499,6 +518,7 @@ function startSync(){
         if (firstSeen.size === SYNC_COLS.length){
           syncReady = true;
           db = fromDocs(synced); localSave(); renderFromRemote(); updateSyncState();
+          pushChanges(); // 古い版のデータを移行して変わった分があれば共有にも反映
         }
       }, syncError));
     });
@@ -529,8 +549,9 @@ save(); // 読み込み時の移行結果も保存しておく
 const itemById = id => db.items.find(i => i.id === id);
 const storeById = id => db.stores.find(t => t.id === id);
 const catById = id => db.categories.find(c => c.id === id);
-const gcatById = id => db.goodsCats.find(c => c.id === id);
-const catList = kind => kind === 'goods' ? db.goodsCats : db.categories;
+const itemCats = cat => cat === 'goods' ? db.goodsCats : db.foodCats;
+const hasItemCat = i => itemCats(i.cat).some(c => c.id === i.gcatId);
+const catList = kind => kind === 'goods' ? db.goodsCats : kind === 'food' ? db.foodCats : db.categories;
 const byRole = (a,b) => roleOrder(a.role) - roleOrder(b.role);
 const segHtml = (list, cur, act) => `<div class="seg">${list.map(([v,l]) => `<button class="${cur === v ? 'on' : ''}" data-act="${act}" data-v="${v}" aria-pressed="${cur === v}">${l}</button>`).join('')}</div>`;
 const storeName = id => { const t = storeById(id); return t ? t.name : ''; };
@@ -662,13 +683,13 @@ function viewMenus(){
 function itemListHtml(cat){
   const q = S.itemQ.trim(), f = S.itemF;
   const list = db.items.filter(i => i.cat === cat && (!q || i.name.includes(q)))
-    .filter(i => cat !== 'goods' || S.gcatF === 'all' || (S.gcatF === 'none' ? !gcatById(i.gcatId) : i.gcatId === S.gcatF)).filter(i =>
+    .filter(i => S.gcatF === 'all' || (S.gcatF === 'none' ? !hasItemCat(i) : i.gcatId === S.gcatF)).filter(i =>
       f === 'season' ? i.season.includes(S.m) :
       f === 'year' ? (!i.season.length || i.season.length === 12) :
       f === 'priced' ? db.prices.some(p => p.itemId === i.id) :
       f === 'nophoto' ? !i.photo : true)
     .sort((a,b) => byJa(a.name,b.name));
-  if (!list.length) return `<div class="list"><div class="empty-msg">${q || f !== 'all' || (cat === 'goods' && S.gcatF !== 'all') ? '条件に合うものがありません' : 'まだ登録されていません。右上の「追加」から登録できます'}</div></div>`;
+  if (!list.length) return `<div class="list"><div class="empty-msg">${q || f !== 'all' || S.gcatF !== 'all' ? '条件に合うものがありません' : 'まだ登録されていません。右上の「追加」から登録できます'}</div></div>`;
   const rowHtml = it => {
     const st = priceStats(it.id), parts = [];
     if (cat === 'food') parts.push('旬 ' + seasonText(it.season));
@@ -679,16 +700,15 @@ function itemListHtml(cat){
     return `<button class="row" data-act="item-open" data-id="${it.id}"><span class="thumb">${it.photo ? `<img src="${it.photo}" alt="">` : esc(it.name.slice(0,1))}</span>
       <div class="main"><div class="name">${esc(it.name)}${cat === 'food' && it.season.includes(S.m) ? '<span class="badge season">旬</span>' : ''}${judgeBadge(st.judge)}</div><div class="sub">${parts.join('　') || '&nbsp;'}</div></div></button>`;
   };
-  if (cat !== 'goods') return `<div class="list">${list.map(rowHtml).join('')}</div>`;
-  // 日用品はカテゴリごとに分ける
-  return [...db.goodsCats.map(c => [c.name, i => i.gcatId === c.id]), ['未分類', i => !gcatById(i.gcatId)]].map(([name, fn]) => {
+  // カテゴリごとに分ける
+  return [...itemCats(cat).map(c => [c.name, i => i.gcatId === c.id]), ['未分類', i => !hasItemCat(i)]].map(([name, fn]) => {
     const g = list.filter(fn);
     return g.length ? `<div class="section-title">${esc(name)}</div><div class="list">${g.map(rowHtml).join('')}</div>` : '';
   }).join('');
 }
-function gcatChoices(){
-  const list = [['all','すべて'], ...db.goodsCats.map(c => [c.id, c.name])];
-  if (db.items.some(i => i.cat === 'goods' && !gcatById(i.gcatId))) list.push(['none','未分類']);
+function gcatChoices(cat){
+  const list = [['all','すべて'], ...itemCats(cat).map(c => [c.id, c.name])];
+  if (db.items.some(i => i.cat === cat && !hasItemCat(i))) list.push(['none','未分類']);
   return list;
 }
 const subBar = (title, right = '') => `<header class="top"><div class="top-inner"><button class="iconbtn" data-act="master-back" aria-label="マスタに戻る">${ICON.prev}</button><h1 style="flex:1">${title}</h1>${right}</div></header>`;
@@ -697,15 +717,15 @@ function viewMaster(){
   if (M === 'food' || M === 'goods'){
     return subBar(M === 'food' ? '食材' : '日用品', '<button class="btn" data-act="item-new">追加</button>') +
       `<div class="wrap"><input class="input" type="search" placeholder="名前で探す" value="${esc(S.itemQ)}" data-in="itemQ">
-        ${M === 'goods' ? filterChips(gcatChoices(), S.gcatF, 'gcat-f') : ''}
-        ${filterChips(ITEM_FILTERS[M], S.itemF, 'item-f').replace('chips filters', M === 'goods' ? 'chips filters" style="margin-top:0' : 'chips filters')}
+        ${filterChips(gcatChoices(M), S.gcatF, 'gcat-f')}
+        ${filterChips(ITEM_FILTERS[M], S.itemF, 'item-f').replace('chips filters', 'chips filters" style="margin-top:0')}
         <div id="itemList">${itemListHtml(M)}</div></div>`;
   }
-  if (M === 'cats' || M === 'gcats'){
-    const kind = M === 'gcats' ? 'goods' : 'menu';
-    const count = c => kind === 'goods' ? `日用品 ${db.items.filter(i => i.cat === 'goods' && i.gcatId === c.id).length}品` : `メニュー ${db.menus.filter(m => m.categoryId === c.id).length}品`;
+  if (M === 'cats' || M === 'gcats' || M === 'fcats'){
+    const kind = M === 'gcats' ? 'goods' : M === 'fcats' ? 'food' : 'menu';
+    const count = c => kind !== 'menu' ? `${kind === 'goods' ? '日用品' : '食材'} ${db.items.filter(i => i.cat === kind && i.gcatId === c.id).length}品` : `メニュー ${db.menus.filter(m => m.categoryId === c.id).length}品`;
     const rows = catList(kind).map(c => `<button class="row" data-act="cat-open" data-kind="${kind}" data-id="${c.id}"><div class="main"><div class="name">${esc(c.name)}</div><div class="sub">${count(c)}</div></div></button>`).join('');
-    return subBar(kind === 'goods' ? '日用品のカテゴリ' : 'メニューの種類', `<button class="btn" data-act="cat-new" data-kind="${kind}">追加</button>`) +
+    return subBar(kind === 'goods' ? '日用品のカテゴリ' : kind === 'food' ? '食材のカテゴリ' : 'メニューの種類', `<button class="btn" data-act="cat-new" data-kind="${kind}">追加</button>`) +
       `<div class="wrap"><div class="list">${rows || '<div class="empty-msg">まだありません。右上の「追加」から登録できます</div>'}</div>
        <p class="hint">並び順は、一覧や絞り込みボタンの順番になります</p></div>`;
   }
@@ -722,6 +742,7 @@ function viewMaster(){
     <div class="section-title">品目</div>
     <div class="list">
       ${row('master-open', 'data-v="food"', '食材', `${foods.length}品　今月が旬 ${foods.filter(i => i.season.includes(S.m)).length}品`)}
+      ${row('master-open', 'data-v="fcats"', '食材のカテゴリ', db.foodCats.map(c => esc(c.name)).join('、') || 'まだありません')}
       ${row('master-open', 'data-v="goods"', '日用品', `${goods.length}品`)}
       ${row('master-open', 'data-v="gcats"', '日用品のカテゴリ', db.goodsCats.map(c => esc(c.name)).join('、') || 'まだありません')}
     </div>
@@ -909,7 +930,9 @@ function renderPick(){
   const q = S.pickQ.trim();
   const foods = db.items.filter(i => i.cat === 'food' && !mdraft.itemIds.includes(i.id) && (!q || i.name.includes(q))).sort((a,b) => byJa(a.name,b.name));
   const canNew = q && !db.items.some(i => i.name === q && i.cat === 'food');
-  $('#pick').innerHTML = foods.map(i => `<button class="chipbtn" data-act="pick" data-id="${i.id}">${esc(i.name)}</button>`).join('') +
+  const groups = [...db.foodCats.map(c => [c.name, i => i.gcatId === c.id]), ['未分類', i => !hasItemCat(i)]];
+  $('#pick').innerHTML = groups.map(([name, fn]) => { const g = foods.filter(fn);
+      return g.length ? `<div style="width:100%;font-size:var(--fs-s);color:var(--muted);margin-top:4px">${esc(name)}</div>` + g.map(i => `<button class="chipbtn" data-act="pick" data-id="${i.id}">${esc(i.name)}</button>`).join('') : ''; }).join('') +
     (canNew ? `<button class="chipbtn" data-act="pick-new">「${esc(q)}」を食材に登録して追加</button>` : '') +
     (!foods.length && !canNew ? '<span class="hint" style="margin:0">追加できる食材がありません</span>' : '');
 }
@@ -923,7 +946,7 @@ function openItem(id){
   openSheet(sheetHead((food ? '食材' : '日用品') + (src ? 'を編集' : 'を追加')) + `<div class="sheet-body">
     <div class="field"><span class="lbl">パッケージ写真</span><div class="photo-row"><button class="photo" id="photoBox" data-act="photo-pick" aria-label="写真を撮る・選ぶ"></button><button class="linkbtn" id="photoDel" data-act="photo-del">写真を外す</button></div></div>
     <label class="field"><span class="lbl">名前</span><input class="input" data-in="i-name" value="${esc(idraft.name)}" placeholder="${food ? '例：白菜' : '例：洗濯洗剤'}"></label>
-    ${food ? '' : '<div class="field"><span class="lbl">カテゴリ</span><div class="chips" id="gCats"></div></div>'}
+    <div class="field"><span class="lbl">カテゴリ</span><div class="chips" id="gCats"></div></div>
     <label class="field"><span class="lbl">${food ? '単位（任意）' : '容量・サイズ（任意）'}</span><input class="input" data-in="i-unit" value="${esc(idraft.unit)}" placeholder="${food ? '例：1玉、1パック' : '例：詰め替え 1.2kg、12ロール'}"></label>
     <label class="field"><span class="lbl">よく買うお店（任意）</span><select class="input" data-ch="i-store">${storeOptions(idraft.favStoreId, '決めていない')}</select></label>
     ${food ? '<div class="field"><span class="lbl">旬の月（選ばなければ通年）</span><div class="months" id="monthsBox"></div></div>'
@@ -934,7 +957,7 @@ function openItem(id){
 function renderItemDraft(){
   $('#photoBox').innerHTML = idraft.photo ? `<img src="${idraft.photo}" alt="パッケージ写真">` : '写真を<br>撮る・選ぶ';
   $('#photoDel').hidden = !idraft.photo;
-  if ($('#gCats')) $('#gCats').innerHTML = db.goodsCats.map(c => `<button class="chipbtn ${idraft.gcatId === c.id ? 'on' : ''}" data-act="i-gcat" data-id="${c.id}">${esc(c.name)}</button>`).join('') || '<span class="hint" style="margin:0">マスタでカテゴリを登録できます</span>';
+  if ($('#gCats')) $('#gCats').innerHTML = itemCats(idraft.cat).map(c => `<button class="chipbtn ${idraft.gcatId === c.id ? 'on' : ''}" data-act="i-gcat" data-id="${c.id}">${esc(c.name)}</button>`).join('') || '<span class="hint" style="margin:0">マスタでカテゴリを登録できます</span>';
   if ($('#monthsBox')) $('#monthsBox').innerHTML = Array.from({length:12}, (_, i) => i + 1).map(m => `<button class="${idraft.season.includes(m) ? 'on' : ''}" data-act="i-month" data-v="${m}" aria-pressed="${idraft.season.includes(m)}">${m}月</button>`).join('');
 }
 function resizeImage(file){
@@ -992,9 +1015,9 @@ let cdraft = null;
 function openCat(id, kind){
   const list = catList(kind), src = id ? list.find(c => c.id === id) : null;
   cdraft = {id:src ? src.id : null, name:src ? src.name : '', kind};
-  const idx = src ? list.indexOf(src) : -1, label = kind === 'goods' ? 'カテゴリ' : '種類';
+  const idx = src ? list.indexOf(src) : -1, label = kind === 'menu' ? '種類' : 'カテゴリ';
   openSheet(sheetHead(label + (src ? 'を編集' : 'を追加')) + `<div class="sheet-body">
-    <label class="field"><span class="lbl">名前</span><input class="input" data-in="c-name" value="${esc(cdraft.name)}" placeholder="${kind === 'goods' ? '例：玄関、ペット' : '例：麺、お弁当'}"></label>
+    <label class="field"><span class="lbl">名前</span><input class="input" data-in="c-name" value="${esc(cdraft.name)}" placeholder="${kind === 'goods' ? '例：玄関、ペット' : kind === 'food' ? '例：果物、乳製品' : '例：麺、お弁当'}"></label>
     ${src ? `<div class="field"><span class="lbl">並び順</span><div class="seg"><button data-act="cat-move" data-d="-1" ${idx === 0 ? 'disabled' : ''}>上へ</button><button data-act="cat-move" data-d="1" ${idx === list.length - 1 ? 'disabled' : ''}>下へ</button></div></div>` : ''}
     <div class="actions">${src ? '<button class="btn danger" data-act="cat-del">削除</button>' : ''}<button class="btn" data-act="cat-save">保存</button></div></div>`);
 }
@@ -1135,8 +1158,9 @@ document.addEventListener('click', e => {
     }
     case 'cat-del': {
       const kind = cdraft.kind, list = catList(kind), c = list.find(x => x.id === cdraft.id);
-      if (!c || !confirm(`「${c.name}」を削除しますか？\n${kind === 'goods' ? 'この日用品' : 'この種類のメニュー'}は「未分類」になります。`)) break;
-      if (kind === 'goods'){ db.goodsCats = list.filter(x => x.id !== c.id); db.items.forEach(i => { if (i.gcatId === c.id) i.gcatId = ''; }); if (S.gcatF === c.id) S.gcatF = 'all'; }
+      if (!c || !confirm(`「${c.name}」を削除しますか？\n${kind === 'goods' ? 'この日用品' : kind === 'food' ? 'この食材' : 'この種類のメニュー'}は「未分類」になります。`)) break;
+      if (kind !== 'menu'){ if (kind === 'goods') db.goodsCats = list.filter(x => x.id !== c.id); else db.foodCats = list.filter(x => x.id !== c.id);
+        db.items.forEach(i => { if (i.cat === kind && i.gcatId === c.id) i.gcatId = ''; }); if (S.gcatF === c.id) S.gcatF = 'all'; }
       else { db.categories = list.filter(x => x.id !== c.id); db.menus.forEach(m => { if (m.categoryId === c.id) m.categoryId = ''; }); if (S.menuCat === c.id) S.menuCat = 'all'; }
       save(); closeSheet(); render(); toast('削除しました'); break;
     }
@@ -1165,7 +1189,7 @@ document.addEventListener('click', e => {
       const name = idraft.name.trim();
       if (!name){ toast('名前を入れてください'); break; }
       if (db.items.some(i => i.name === name && i.cat === idraft.cat && i.id !== idraft.id)){ toast('同じ名前が登録されています'); break; }
-      const data = {name, cat:idraft.cat, gcatId:idraft.cat === 'goods' ? idraft.gcatId : '', unit:idraft.unit.trim(), memo:idraft.memo.trim(), season:idraft.cat === 'food' ? idraft.season : [], photo:idraft.photo, favStoreId:idraft.favStoreId, updatedAt:Date.now()};
+      const data = {name, cat:idraft.cat, gcatId:idraft.gcatId, unit:idraft.unit.trim(), memo:idraft.memo.trim(), season:idraft.cat === 'food' ? idraft.season : [], photo:idraft.photo, favStoreId:idraft.favStoreId, updatedAt:Date.now()};
       if (idraft.id) Object.assign(itemById(idraft.id), data); else db.items.push({id:uid(), ...data});
       if (save()){ closeSheet(); render(); toast('保存しました'); }
       break;
