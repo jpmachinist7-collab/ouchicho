@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="おうち帳">
-<title>おうち帳 v0.6</title>
+<title>おうち帳 v0.7</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
@@ -127,6 +127,13 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:var(--fs-s);opacity:0;pointer-events:none;transition:opacity .2s;z-index:30;max-width:90%;text-align:center}
 .toast.show{opacity:1}
 
+/* ログイン */
+.login{position:fixed;inset:0;z-index:40;background:var(--bg);display:flex;align-items:center;justify-content:center;padding:24px}
+.login[hidden]{display:none}
+.login .box{width:100%;max-width:360px}
+.login h1{font-size:var(--fs-l);margin:0 0 4px}
+.login .err{color:var(--bad);font-size:var(--fs-s);min-height:1.6em;margin-top:8px}
+
 /* 買い物リスト */
 .weeklabel{font-size:var(--fs-m);font-weight:700;text-align:center;flex:1}
 .check{width:26px;height:26px;border-radius:13px;border:2px solid var(--line);background:transparent;display:grid;place-items:center;flex:none;color:transparent;padding:0}
@@ -154,12 +161,25 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
   <div class="sheet" id="sheet" role="dialog" aria-modal="true"></div>
 </div>
 <div id="toast" class="toast" role="status"></div>
+<div id="login" class="login" hidden>
+  <div class="box">
+    <h1>おうち帳</h1>
+    <p class="hint" style="margin:0 0 8px">家族で共有するために、登録したメールアドレスでログインしてください</p>
+    <label class="field"><span class="lbl">メールアドレス</span><input class="input" id="lgEmail" type="email" autocomplete="username" inputmode="email"></label>
+    <label class="field"><span class="lbl">パスワード</span><input class="input" id="lgPass" type="password" autocomplete="current-password"></label>
+    <div class="actions"><button class="btn" data-act="login">ログイン</button></div>
+    <div class="err" id="lgErr" role="alert"></div>
+  </div>
+</div>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <input type="file" id="photoInput" accept="image/*" hidden>
 <input type="file" id="importInput" accept="application/json,.json" hidden>
 
 <script>
 'use strict';
-const VERSION = 'v0.6';
+const VERSION = 'v0.7';
 const KEY = 'ouchicho-data';
 const WD = ['日','月','火','水','木','金','土'];
 // 月ごとの季節色（画面のアクセント色）
@@ -375,10 +395,132 @@ function load(){
   try { const raw = localStorage.getItem(KEY); return raw ? normalize(JSON.parse(raw)) : null; }
   catch(e){ return null; }
 }
-function save(){
+function localSave(){
   try { localStorage.setItem(KEY, JSON.stringify(db)); return true; }
-  catch(e){ toast('保存できませんでした。写真を減らすか、設定からバックアップを書き出してください'); return false; }
+  catch(e){ toast('この端末に保存できませんでした。写真を減らすか、設定からバックアップを書き出してください'); return false; }
 }
+function save(){ const ok = localSave(); pushChanges(); return ok; }
+
+// ---------- 家族共有（Firebase） ----------
+const FB_CONFIG = {
+  apiKey: "AIzaSyBwJ7tc525p0VHxGeYqw-DiRbrbTwF1srY",
+  authDomain: "ouchicho-6d1f1.firebaseapp.com",
+  projectId: "ouchicho-6d1f1",
+  storageBucket: "ouchicho-6d1f1.firebasestorage.app",
+  messagingSenderId: "208503156435",
+  appId: "1:208503156435:web:68baea92ecbaa0bf706e26"
+};
+const HOUSE = 'households/ouchi';
+const SYNC_COLS = ['items','menus','stores','prices','plan','shopping','meta'];
+let fs = null, auth = null, fbUser = null, synced = null, syncReady = false, unsubs = [], pendingWrites = 0, pendingRender = false;
+
+// キーの順番に左右されない比較用の文字列
+function stable(v){
+  if (Array.isArray(v)) return '[' + v.map(stable).join(',') + ']';
+  if (v && typeof v === 'object') return '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + stable(v[k])).join(',') + '}';
+  return JSON.stringify(v);
+}
+// アプリのデータ ⇔ Firestoreの文書（価格1件、献立1日分…ごとに分けて、同時に書いても上書きし合わないようにする）
+function toDocs(d){
+  const m = {};
+  d.items.forEach(x => m['items/' + x.id] = x);
+  d.menus.forEach(x => m['menus/' + x.id] = x);
+  d.stores.forEach(x => m['stores/' + x.id] = x);
+  d.prices.forEach(x => m['prices/' + x.id] = x);
+  for (const [k,v] of Object.entries(d.plan)) m['plan/' + k] = {ids:v};
+  for (const [k,v] of Object.entries(d.shopping)) m['shopping/' + k] = v;
+  m['meta/categories'] = {list:d.categories};
+  m['meta/goodsCats'] = {list:d.goodsCats};
+  return m;
+}
+function fromDocs(map){
+  const raw = {items:[], menus:[], stores:[], prices:[], plan:{}, shopping:{}, categories:[], goodsCats:[], settings:db.settings};
+  for (const [path, json] of map){
+    const [col, id] = path.split('/'), v = JSON.parse(json);
+    if (col === 'plan') raw.plan[id] = v.ids;
+    else if (col === 'shopping') raw.shopping[id] = v;
+    else if (col === 'meta'){ if (id === 'categories') raw.categories = v.list || []; if (id === 'goodsCats') raw.goodsCats = v.list || []; }
+    else if (raw[col]) raw[col].push(v);
+  }
+  return normalize(raw);
+}
+function pushChanges(){
+  if (!syncReady || !fs || !synced) return;
+  const cur = toDocs(db), seen = new Set(), ops = [];
+  for (const [p, v] of Object.entries(cur)){
+    const j = stable(v); seen.add(p);
+    if (synced.get(p) !== j){ ops.push(['set', p, v]); synced.set(p, j); }
+  }
+  for (const p of [...synced.keys()]) if (!seen.has(p)){ ops.push(['del', p]); synced.delete(p); }
+  for (let i = 0; i < ops.length; i += 400){
+    const b = fs.batch();
+    ops.slice(i, i + 400).forEach(([t, p, v]) => { const ref = fs.doc(HOUSE + '/' + p); if (t === 'set') b.set(ref, JSON.parse(JSON.stringify(v))); else b.delete(ref); });
+    pendingWrites++; updateSyncState();
+    b.commit().then(() => { pendingWrites--; updateSyncState(); }).catch(e => { pendingWrites--; updateSyncState(); syncError(e); });
+  }
+}
+function syncStateText(){
+  if (!fs) return 'この端末だけで使用中（共有の仕組みを読み込めませんでした）';
+  if (!fbUser) return 'ログインしていません';
+  if (!navigator.onLine) return pendingWrites ? 'オフライン（つながったら送ります）' : 'オフライン';
+  if (!syncReady) return '読み込み中…';
+  return pendingWrites ? '送信中…' : '同期済み';
+}
+function updateSyncState(){ const el = $('#syncState'); if (el) el.textContent = syncStateText(); }
+let lastSyncErr = 0;
+function syncError(e){
+  if (e && e.code === 'permission-denied'){ toast('このアカウントでは家族のデータを見られません'); if (auth) auth.signOut(); return; }
+  if (Date.now() - lastSyncErr > 10000){ lastSyncErr = Date.now(); toast('同期できませんでした。少し待ってからもう一度開いてください'); }
+}
+// 入力中は画面を作り直さない（打っている文字が消えないように）
+function renderFromRemote(){
+  const a = document.activeElement;
+  if (a && $('#app').contains(a) && /INPUT|SELECT|TEXTAREA/.test(a.tagName)){ pendingRender = true; return; }
+  render();
+  if ($('#dayCands')) renderDay();
+  if ($('#shopPick')) renderShopPick();
+  if ($('#priceHist')) renderPriceHistory();
+}
+function startSync(){
+  synced = new Map(); syncReady = false; updateSyncState();
+  const firstSeen = new Set();
+  fs.collection(HOUSE + '/meta').get().then(snap => {
+    if (snap.empty){
+      // 家族の誰もまだ使っていない：この端末のデータを共有の最初のデータにする
+      syncReady = true; pushChanges(); toast('この端末のデータを家族共有に移しました');
+    }
+    SYNC_COLS.forEach(col => {
+      unsubs.push(fs.collection(HOUSE + '/' + col).onSnapshot(qs => {
+        qs.docChanges().forEach(ch => {
+          const p = col + '/' + ch.doc.id;
+          if (ch.type === 'removed') synced.delete(p); else synced.set(p, stable(ch.doc.data()));
+        });
+        firstSeen.add(col);
+        if (firstSeen.size === SYNC_COLS.length){
+          syncReady = true;
+          db = fromDocs(synced); localSave(); renderFromRemote(); updateSyncState();
+        }
+      }, syncError));
+    });
+  }).catch(syncError);
+}
+function initFirebase(){
+  if (!window.firebase){ updateSyncState(); return; }
+  try {
+    firebase.initializeApp(FB_CONFIG);
+    auth = firebase.auth(); fs = firebase.firestore();
+    fs.enablePersistence({synchronizeTabs:true}).catch(() => {});
+  } catch(e){ fs = null; auth = null; return; }
+  auth.onAuthStateChanged(u => {
+    fbUser = u; unsubs.forEach(f => f()); unsubs = []; syncReady = false; synced = null;
+    $('#login').hidden = !!u;
+    if (u) startSync();
+    render();
+  });
+  window.addEventListener('online', updateSyncState);
+  window.addEventListener('offline', updateSyncState);
+}
+document.addEventListener('focusout', () => { if (pendingRender){ pendingRender = false; setTimeout(() => { const a = document.activeElement; if (!(a && /INPUT|SELECT|TEXTAREA/.test(a.tagName))) renderFromRemote(); else pendingRender = true; }, 50); } });
 
 let db = load();
 if (!db) db = seed();
@@ -670,6 +812,11 @@ function viewShop(){
 
 function viewSettings(){
   return topBar('設定', `<span class="appname">おうち帳<span class="ver">${VERSION}</span></span>`) + `<div class="wrap">
+    <div class="section-title">家族で共有</div>
+    <div class="list">
+      <div class="row"><div class="main"><div class="name">状態</div><div class="sub" id="syncState">${syncStateText()}</div></div></div>
+      ${fbUser ? `<div class="row"><div class="main"><div class="name">ログイン中</div><div class="sub">${esc(fbUser.email || '')}</div></div><button class="btn sub" data-act="logout">ログアウト</button></div>` : ''}
+    </div>
     <div class="section-title">初期データ</div>
     <div class="list">
       <button class="row" data-act="add-general"><div class="main"><div class="name">一般的なメニュー・食材・日用品を追加する</div><div class="sub">登録済みのものはそのまま、無いものだけ足します</div></div></button>
@@ -1075,10 +1222,22 @@ document.addEventListener('click', e => {
     case 'shop-pick': { const w = shopWeek(S.week); if (!w.extra.includes(id)) w.extra.push(id); save(); renderShopPick(); render(); toast(`${itemById(id).name}を追加しました`); break; }
     case 'shop-remove': { const w = shopWeek(S.week); w.extra = w.extra.filter(x => x !== id); delete w.checked[id]; save(); render(); break; }
 
+    case 'login': {
+      const email = $('#lgEmail').value.trim(), pass = $('#lgPass').value;
+      if (!email || !pass){ $('#lgErr').textContent = 'メールアドレスとパスワードを入れてください'; break; }
+      $('#lgErr').textContent = 'ログイン中…';
+      auth.signInWithEmailAndPassword(email, pass).then(() => { $('#lgErr').textContent = ''; $('#lgPass').value = ''; })
+        .catch(e => { $('#lgErr').textContent = e.code === 'auth/network-request-failed' ? '通信できません。電波のある場所でもう一度試してください' : e.code === 'auth/too-many-requests' ? '何度も失敗したので、少し時間をおいてから試してください' : 'メールアドレスかパスワードが違います'; });
+      break;
+    }
+    case 'logout': {
+      if (!confirm('ログアウトしますか？\n次に開いたときにもう一度ログインが必要です。')) break;
+      auth.signOut(); break;
+    }
     case 'export': exportData(); break;
     case 'import': $('#importInput').value = ''; $('#importInput').click(); break;
     case 'reset': {
-      if (!confirm('登録した内容をすべて消して、初期データに戻しますか？\n先にバックアップを書き出しておくと安心です。')) break;
+      if (!confirm(`登録した内容をすべて消して、初期データに戻しますか？${fbUser ? '\n家族の画面のデータも消えます。' : ''}\n先にバックアップを書き出しておくと安心です。`)) break;
       db = seed(); save(); render(); toast('初期データに戻しました'); break;
     }
   }
@@ -1089,7 +1248,7 @@ document.addEventListener('input', e => {
   const v = e.target.value;
   if (k === 'dayQ'){ S.dayQ = v; renderDay(); }
   else if (k === 'menuQ'){ S.menuQ = v; $('#menuList').innerHTML = menuListHtml(); }
-  else if (k === 'itemQ'){ S.itemQ = v; $('#itemList').innerHTML = itemListHtml(); }
+  else if (k === 'itemQ'){ S.itemQ = v; $('#itemList').innerHTML = itemListHtml(S.master); }
   else if (k === 'shopQ'){ S.shopQ = v; renderShopPick(); }
   else if (k === 'pickQ'){ S.pickQ = v; renderPick(); }
   else if (k === 'm-name') mdraft.name = v;
@@ -1120,7 +1279,7 @@ $('#importInput').addEventListener('change', e => {
     try {
       const obj = JSON.parse(fr.result);
       if (!obj || !Array.isArray(obj.items) || !Array.isArray(obj.menus)) throw new Error('format');
-      if (!confirm('今のデータを、このバックアップの内容に置き換えますか？')) return;
+      if (!confirm(`今のデータを、このバックアップの内容に置き換えますか？${fbUser ? '\n家族の画面のデータも置き換わります。' : ''}`)) return;
       db = normalize(obj); save(); render(); toast('バックアップを読み込みました');
     } catch(err){ toast('おうち帳のバックアップファイルではないようです'); }
   };
@@ -1128,6 +1287,7 @@ $('#importInput').addEventListener('change', e => {
 });
 
 render();
+initFirebase();
 </script>
 </body>
 </html>
