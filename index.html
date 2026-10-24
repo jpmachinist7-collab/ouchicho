@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="おうち帳">
-<title>おうち帳 v0.8</title>
+<title>おうち帳 v0.9</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
@@ -179,7 +179,7 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 
 <script>
 'use strict';
-const VERSION = 'v0.8';
+const VERSION = 'v0.9';
 const KEY = 'ouchicho-data';
 const WD = ['日','月','火','水','木','金','土'];
 // 月ごとの季節色（画面のアクセント色）
@@ -193,6 +193,9 @@ const SEED_FOODS = [
   ['きゅうり',[6,7,8]],['ピーマン',[6,7,8,9]],['ゴーヤ',[7,8]],['オクラ',[7,8,9]],['とうもろこし',[7,8]],
   ['たけのこ',[4,5]],['アスパラガス',[4,5,6]],['生しいたけ',[3,4,10,11]],
   ['玉ねぎ',[]],['にんじん',[]],['じゃがいも',[]],['しめじ',[]],['もやし',[]],['焼きそば麺',[]],
+  ['いちご',[1,2,3,4,5]],['みかん',[11,12,1,2]],['りんご',[9,10,11,12,1]],['キウイ',[11,12,1,2,3,4]],['ぶどう',[8,9,10]],['もも',[7,8]],
+  ['梨',[8,9,10]],['柿',[10,11]],['すいか',[6,7,8]],['メロン',[5,6,7,8]],['さくらんぼ',[6,7]],['ブルーベリー',[6,7,8]],
+  ['バナナ',[]],['レモン',[]],['グレープフルーツ',[]],
   ['さんま',[9,10]],['鮭',[9,10,11]],['ぶり',[12,1,2]],['さば',[10,11,12,1,2]],['あじ',[5,6,7]],
   ['かつお',[4,5,9,10]],['たら',[12,1,2]],['牡蠣',[11,12,1,2]],
   ['豚こま',[]],['鶏もも',[]],['牛こま',[]],['ひき肉',[]],['卵',[]],['豆腐',[]],['油揚げ',[]]
@@ -201,6 +204,7 @@ const SEED_GCATS = ['キッチン','洗濯','トイレ','お風呂・洗面','�
 // 食材のカテゴリ。idを固定にして、家族のどの端末で移行しても同じ結果になるようにする
 const SEED_FCATS = [
   ['fc1','野菜',['白菜','大根','キャベツ','ほうれん草','小松菜','春菊','長ねぎ','ブロッコリー','れんこん','ごぼう','里芋','さつまいも','かぼちゃ','なす','トマト','きゅうり','ピーマン','ゴーヤ','オクラ','とうもろこし','たけのこ','アスパラガス','玉ねぎ','にんじん','じゃがいも','もやし']],
+  ['fc8','果物',['いちご','みかん','りんご','キウイ','ぶどう','もも','梨','柿','すいか','メロン','さくらんぼ','ブルーベリー','バナナ','レモン','グレープフルーツ']],
   ['fc2','きのこ',['生しいたけ','しめじ']],
   ['fc3','肉',['豚こま','鶏もも','牛こま','ひき肉']],
   ['fc4','魚介',['さんま','鮭','ぶり','さば','あじ','かつお','たら','牡蠣']],
@@ -342,7 +346,11 @@ function addGeneral(){
   let nItems = 0, nMenus = 0;
   SEED_CATS.forEach(name => { if (!db.categories.some(c => c.name === name)) db.categories.push({id:uid(), name}); });
   SEED_GCATS.forEach(name => { if (!db.goodsCats.some(c => c.name === name)) db.goodsCats.push({id:uid(), name}); });
-  SEED_FCATS.forEach(([id, name]) => { if (!db.foodCats.some(c => c.name === name)) db.foodCats.push({id:db.foodCats.some(c => c.id === id) ? uid() : id, name}); });
+  SEED_FCATS.forEach(([id, name]) => {
+    if (db.foodCats.some(c => c.name === name)) return;
+    const c = {id:db.foodCats.some(x => x.id === id) ? uid() : id, name}, other = db.foodCats.findIndex(x => x.name === 'その他');
+    if (other >= 0) db.foodCats.splice(other, 0, c); else db.foodCats.push(c);  // 「その他」より前に入れる
+  });
   const fcatIdOf = n => { const r = SEED_FCATS.find(x => x[2].includes(n)); const c = r && db.foodCats.find(x => x.name === r[1]); return c ? c.id : ''; };
   SEED_FOODS.forEach(([n,s]) => { if (!db.items.some(i => i.name === n && i.cat === 'food')){ db.items.push(newItem(n,'food',s, fcatIdOf(n))); nItems++; } });
   SEED_GOODS.forEach(([n,g]) => { if (!db.items.some(i => i.name === n && i.cat === 'goods')){ db.items.push(newItem(n,'goods',[], (db.goodsCats.find(c => c.name === g) || {}).id)); nItems++; } });
