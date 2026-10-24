@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="おうち帳">
-<title>おうち帳 v0.19</title>
+<title>おうち帳 v0.20</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
@@ -120,6 +120,8 @@ header.top.acc{background:var(--acc);color:var(--on-acc)}
 @media (min-width:600px){.cal.cal-2w .day{height:150px}.cal.cal-1w .day{height:240px}}
 .dn.wide{width:auto;padding:0 6px}
 .monthlabel.wk{font-size:var(--fs-l)}
+.dish{letter-spacing:-.02em}
+.day.few .dish,.cal.cal-2w .dish,.cal.cal-1w .dish{white-space:normal;text-overflow:clip;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;line-height:1.3;margin-bottom:2px;word-break:break-all}
 .dish.more{border-left-color:transparent;color:var(--muted)}
 @media (min-width:600px){.day{height:104px;padding:6px}.dish{font-size:var(--fs-s)}}
 
@@ -251,7 +253,7 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 
 <script>
 'use strict';
-const VERSION = 'v0.19';
+const VERSION = 'v0.20';
 const KEY = 'ouchicho-data';
 const WD = ['日','月','火','水','木','金','土'];
 // 月ごとの季節色（画面のアクセント色）
@@ -713,9 +715,10 @@ function dayCell(ds, t, limit, showMonth){
   const d = new Date(ds + 'T00:00:00'), wd = d.getDay();
   const dishes = (db.plan[ds] || []).map(menuById).filter(Boolean).sort(byRole);
   const many = dishes.length > limit;  // 入りきらない分は「ほか○品」
+  const few = limit === 3 && dishes.length <= 2;  // 月表示で2品以下なら料理名を2行まで折り返す
   const shown = (many ? dishes.slice(0, limit - 1) : dishes).map(x => `<span class="dish r-${x.role}">${esc(x.name)}</span>`).join('') + (many ? `<span class="dish more">ほか${dishes.length - limit + 1}品</span>` : '');
   const label = showMonth || d.getDate() === 1 ? `${d.getMonth()+1}/${d.getDate()}` : d.getDate();
-  return `<button class="day ${wd === 0 ? 'sun' : wd === 6 ? 'sat' : ''} ${ds === t ? 'today' : ''}" data-act="open-day" data-date="${ds}" aria-label="${fmtDate(ds)}"><span class="dn ${String(label).includes('/') ? 'wide' : ''}">${label}</span>${shown}</button>`;
+  return `<button class="day ${wd === 0 ? 'sun' : wd === 6 ? 'sat' : ''} ${ds === t ? 'today' : ''} ${few ? 'few' : ''}" data-act="open-day" data-date="${ds}" aria-label="${fmtDate(ds)}"><span class="dn ${String(label).includes('/') ? 'wide' : ''}">${label}</span>${shown}</button>`;
 }
 function viewPlan(){
   const mode = db.settings.calMode || 'month', t = todayStr();
@@ -732,7 +735,9 @@ function viewPlan(){
     label = `<small>${y}年</small>${m}月`;
   } else {
     const n = mode === '1w' ? 7 : 14;
-    for (let i = 0; i < n; i++) cells += dayCell(addDays(S.wStart, i), t, mode === '1w' ? 8 : 5, i === 0);
+    // 料理名を2行まで出すので、マスの高さに入る品数に合わせる（iPadは少し多め）
+    const wide = window.innerWidth >= 600, limit = mode === '1w' ? (wide ? 6 : 5) : (wide ? 4 : 3);
+    for (let i = 0; i < n; i++) cells += dayCell(addDays(S.wStart, i), t, limit, i === 0);
     label = `<small>${y}年</small>${shortDate(S.wStart)}〜${shortDate(addDays(S.wStart, n - 1))}`;
   }
   const calMode = `<div class="calbar">${segHtml([['month','月'],['2w','2週間'],['1w','1週間']], mode, 'cal-mode')}<button class="btn small ghost" data-act="cal-today">今日</button></div>`;
