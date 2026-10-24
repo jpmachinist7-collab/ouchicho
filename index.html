@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="おうち帳">
-<title>おうち帳 v0.10</title>
+<title>おうち帳 v0.11</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
@@ -70,24 +70,24 @@ header.top.acc{background:var(--acc);color:var(--on-acc)}
 .cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;margin-top:16px}
 .cal .wd{background:var(--surface);text-align:center;font-size:var(--fs-s);color:var(--muted);padding:6px 0}
 .cal .wd.sun{color:var(--bad)}
-.day{background:var(--surface);min-height:78px;padding:4px;border:0;text-align:left;display:flex;flex-direction:column;align-items:stretch;gap:1px;min-width:0}
+.day{background:var(--surface);height:84px;overflow:hidden;padding:4px;border:0;text-align:left;display:flex;flex-direction:column;align-items:stretch;gap:1px;min-width:0}
 .day.empty{background:var(--bg)}
 .dn{font-size:var(--fs-s);font-weight:500;width:24px;height:24px;display:grid;place-items:center;border-radius:12px}
 .day.sun .dn{color:var(--bad)}
 .day.today .dn{background:var(--acc);color:var(--on-acc)}
 .dish{font-size:var(--fs-xs);line-height:1.35;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
-@media (min-width:600px){.day{min-height:100px;padding:6px}.dish{font-size:var(--fs-s)}}
+@media (min-width:600px){.day{height:104px;padding:6px}.dish{font-size:var(--fs-s)}}
 
 /* シート */
 .sheet-wrap{position:fixed;inset:0;z-index:20}
 .sheet-wrap[hidden]{display:none}
 .backdrop{position:absolute;inset:0;background:rgba(0,0,0,.35)}
-.sheet{position:absolute;left:0;right:0;bottom:0;max-width:760px;margin:0 auto;max-height:90%;background:var(--bg);border-radius:16px 16px 0 0;display:flex;flex-direction:column;animation:up .22s ease}
+.sheet{position:absolute;left:0;right:0;bottom:0;max-width:760px;margin:0 auto;height:90%;background:var(--bg);border-radius:16px 16px 0 0;display:flex;flex-direction:column;animation:up .22s ease}
 @keyframes up{from{transform:translateY(40px);opacity:.6}to{transform:none;opacity:1}}
 @media (prefers-reduced-motion:reduce){.sheet{animation:none}}
 .sheet-head{display:flex;align-items:center;justify-content:space-between;padding:14px 12px 6px 16px}
 .sheet-head h2{font-size:var(--fs-l);margin:0;font-weight:700}
-.sheet-body{overflow-y:auto;padding:0 16px calc(24px + env(safe-area-inset-bottom,0px));-webkit-overflow-scrolling:touch}
+.sheet-body{flex:1;min-height:0;overflow-y:auto;padding:0 16px calc(24px + env(safe-area-inset-bottom,0px));-webkit-overflow-scrolling:touch}
 
 /* フォーム */
 .field{display:block;margin:14px 0}
@@ -179,7 +179,7 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 
 <script>
 'use strict';
-const VERSION = 'v0.10';
+const VERSION = 'v0.11';
 const KEY = 'ouchicho-data';
 const WD = ['日','月','火','水','木','金','土'];
 // 月ごとの季節色（画面のアクセント色）
@@ -624,7 +624,8 @@ function viewPlan(){
   for (let d = 1; d <= days; d++){
     const ds = dstr(y,m,d), wd = (first + d - 1) % 7;
     const dishes = (db.plan[ds] || []).map(menuById).filter(Boolean).sort(byRole);
-    const shown = dishes.slice(0,3).map(x => `<span class="dish">${esc(x.name)}</span>`).join('') + (dishes.length > 3 ? `<span class="dish">ほか${dishes.length - 3}品</span>` : '');
+    const many = dishes.length > 3;  // マスに入るのは3行まで。4品以上は2品＋「ほか○品」
+    const shown = (many ? dishes.slice(0,2) : dishes).map(x => `<span class="dish">${esc(x.name)}</span>`).join('') + (many ? `<span class="dish">ほか${dishes.length - 2}品</span>` : '');
     cells += `<button class="day ${wd === 0 ? 'sun' : ''} ${ds === t ? 'today' : ''}" data-act="open-day" data-date="${ds}" aria-label="${fmtDate(ds)}"><span class="dn">${d}</span>${shown}</button>`;
   }
   const rest = (7 - (first + days) % 7) % 7;
