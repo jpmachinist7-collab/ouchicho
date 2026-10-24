@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="おうち帳">
-<title>おうち帳 v0.13</title>
+<title>おうち帳 v0.14</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
@@ -190,6 +190,16 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 .sum b{font-size:var(--fs-l)}
 .sum span{font-size:var(--fs-s);color:var(--muted)}
 .toolrow{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.pickgrid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
+@media (min-width:600px){.pickgrid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+.pk{position:relative;border:1px solid var(--line);background:var(--surface);border-radius:12px;padding:10px 6px 8px;min-height:56px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:var(--fs-s);font-weight:500;color:inherit;text-align:center;line-height:1.3}
+.pk .s{font-size:var(--fs-xs);font-weight:700;color:var(--acc-ink)}
+.pk .c{font-size:var(--fs-xs);color:var(--muted)}
+.pk.on{border-color:var(--acc);background:color-mix(in srgb,var(--acc) 12%,var(--surface));font-weight:700}
+.pk.on::after{content:"✓";position:absolute;top:3px;right:7px;font-size:var(--fs-xs);color:var(--acc-ink);font-weight:700}
+.pk.new{border-style:dashed;color:var(--acc-ink)}
+.sheet-foot{position:sticky;bottom:0;background:var(--bg);padding:12px 0 4px;margin-top:12px;display:flex;align-items:center;gap:10px}
+.sheet-foot span{flex:1;font-size:var(--fs-s);color:var(--muted)}
 .chart{width:100%;height:auto;display:block;background:var(--surface);border:1px solid var(--line);border-radius:var(--r)}
 .chart .ax{font-size:11px;fill:var(--muted)}
 .chart .grid{stroke:var(--line);stroke-width:1}
@@ -228,7 +238,7 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 
 <script>
 'use strict';
-const VERSION = 'v0.13';
+const VERSION = 'v0.14';
 const KEY = 'ouchicho-data';
 const WD = ['日','月','火','水','木','金','土'];
 // 月ごとの季節色（画面のアクセント色）
@@ -680,7 +690,7 @@ const judgeBadge = j => j === '安い' ? '<span class="badge cheap">安い</span
 
 // ---------- 状態 ----------
 const now = new Date();
-const S = {shopMode:false, fpStart:null, fpDays:7, fpSel:null, showDone:false, reqQ:'', reqRole:'main', shopEdit:null, tab:'plan', y:now.getFullYear(), m:now.getMonth()+1, master:null, menuCat:'all', dayCat:'all', menuRole:'all', dayRole:'all', gcatF:'all', menuQ:'', menuF:'all', itemQ:'', itemF:'all', dayQ:'', pickQ:'', shopQ:'', day:null, priceItem:null, week:null};
+const S = {picker:false, pickCat:'freq', shopMode:false, fpStart:null, fpDays:7, fpSel:null, showDone:false, reqQ:'', reqRole:'main', shopEdit:null, tab:'plan', y:now.getFullYear(), m:now.getMonth()+1, master:null, menuCat:'all', dayCat:'all', menuRole:'all', dayRole:'all', gcatF:'all', menuQ:'', menuF:'all', itemQ:'', itemF:'all', dayQ:'', pickQ:'', shopQ:'', day:null, priceItem:null, week:null};
 let mdraft = null, idraft = null;
 
 // ---------- 画面 ----------
@@ -976,13 +986,29 @@ function renderDay(){
     : `<div class="empty-msg">${q || S.dayCat !== 'all' || S.dayRole !== 'all' ? '条件に合うメニューがありません' : 'メニューがありません。メニュー画面から登録できます'}</div>`;
 }
 
-// メニュー編集
+// メニュー編集（材料選びは同じシートの中で別の画面に切り替える）
 function openMenu(id){
   const src = id ? menuById(id) : null;
   mdraft = {id:src ? src.id : null, name:src ? src.name : '', role:src ? src.role : (S.menuRole !== 'all' ? S.menuRole : 'main'), categoryId:src ? src.categoryId : (S.menuCat !== 'all' && S.menuCat !== 'none' ? S.menuCat : ''),
     teiban:src ? !!src.teiban : false, genen:src ? !!src.genen : false, itemIds:src ? [...src.itemIds] : [], qty:src ? {...src.qty} : {}, steps:src ? src.steps : ''};
-  S.pickQ = '';
-  openSheet(sheetHead(src ? 'メニューを編集' : 'メニューを追加') + `<div class="sheet-body">
+  S.picker = false; S.pickQ = ''; S.pickCat = 'freq';
+  openSheet('<div id="menuSheet" style="display:flex;flex-direction:column;flex:1;min-height:0"></div>');
+  renderMenuSheet();
+}
+function renderMenuSheet(){
+  const box = $('#menuSheet'); if (!box) return;
+  if (S.picker){
+    box.innerHTML = `<div class="sheet-head"><button class="iconbtn" data-act="pick-done" aria-label="メニューの編集に戻る">${ICON.prev}</button><h2 style="flex:1">材料を選ぶ</h2><button class="btn" data-act="pick-done">完了</button></div>
+      <div class="sheet-body" id="pickBody">
+        <input class="input" type="search" id="pickInput" placeholder="食材の名前で探す" data-in="pickQ" value="${esc(S.pickQ)}">
+        <div id="pickCats"></div>
+        <div id="pick"></div>
+        <div class="sheet-foot"><span id="pickCount"></span><button class="btn" data-act="pick-done">完了</button></div>
+      </div>`;
+    renderPick(); return;
+  }
+  const src = mdraft.id ? menuById(mdraft.id) : null;
+  box.innerHTML = sheetHead(src ? 'メニューを編集' : 'メニューを追加') + `<div class="sheet-body">
     <label class="field"><span class="lbl">料理名</span><input class="input" data-in="m-name" value="${esc(mdraft.name)}" placeholder="例：肉じゃが"></label>
     <div class="field"><span class="lbl">献立の区分</span><div id="roleSeg"></div></div>
     <div class="field"><span class="lbl">種類</span><div class="chips" id="mCats"></div></div>
@@ -990,33 +1016,54 @@ function openMenu(id){
       <div class="field"><span class="lbl">よく作る？</span><div class="seg" id="teibanSeg"></div></div>
       <div class="field"><span class="lbl">味つけ</span><div class="seg" id="genenSeg"></div></div>
     </div>
-    <div class="field"><span class="lbl">材料と分量（家の作り方に合わせて直せます）</span><div class="list" id="chosen"></div></div>
-    <div class="field"><span class="lbl">食材を追加</span><input class="input" type="search" id="pickInput" placeholder="食材を探す" data-in="pickQ"><div class="chips" id="pick" style="margin-top:10px"></div></div>
+    <div class="field"><span class="lbl">材料と分量（家の作り方に合わせて直せます）</span><div class="list" id="chosen"></div>
+      <div class="actions" style="margin-top:8px"><button class="btn sub" data-act="pick-open">材料を追加・変更する</button></div></div>
     <label class="field"><span class="lbl">作り方・メモ</span><textarea class="input" data-in="m-steps" placeholder="手順やコツを書いておく">${esc(mdraft.steps)}</textarea></label>
     <div class="actions">${src ? '<button class="btn danger" data-act="menu-del">削除</button>' : ''}<button class="btn" data-act="menu-save">保存</button></div>
-    ${src ? `<div class="actions" style="margin-top:10px"><button class="btn sub" data-act="req-add" data-id="${src.id}">この料理を食べたいとリクエスト</button></div>` : ''}</div>`);
+    ${src ? `<div class="actions" style="margin-top:10px"><button class="btn sub" data-act="req-add" data-id="${src.id}">この料理を食べたいとリクエスト</button></div>` : ''}</div>`;
   renderMenuMeta(); renderPick();
 }
 function renderMenuMeta(){
+  if (!$('#roleSeg')) return;
   $('#roleSeg').innerHTML = segHtml(ROLES, mdraft.role, 'm-role');
   $('#mCats').innerHTML = db.categories.map(c => `<button class="chipbtn ${mdraft.categoryId === c.id ? 'on' : ''}" data-act="m-cat" data-id="${c.id}">${esc(c.name)}</button>`).join('') || '<span class="hint" style="margin:0">マスタでカテゴリを登録できます</span>';
   $('#teibanSeg').innerHTML = [[true,'定番'],[false,'ときどき']].map(([v,l]) => `<button class="${mdraft.teiban === v ? 'on' : ''}" data-act="m-teiban" data-v="${v}">${l}</button>`).join('');
   $('#genenSeg').innerHTML = [[false,'ふつう'],[true,'減塩']].map(([v,l]) => `<button class="${mdraft.genen === v ? 'on' : ''}" data-act="m-genen" data-v="${v}">${l}</button>`).join('');
 }
+// よく使う食材：登録しているメニューで使われている回数が多い順
+function frequentFoods(){
+  const n = new Map();
+  db.menus.forEach(m => m.itemIds.forEach(id => n.set(id, (n.get(id) || 0) + 1)));
+  return db.items.filter(i => i.cat === 'food' && n.get(i.id)).sort((a,b) => n.get(b.id) - n.get(a.id) || byJa(a.name, b.name)).slice(0, 18);
+}
 function renderPick(){
-  $('#chosen').innerHTML = mdraft.itemIds.length ? mdraft.itemIds.map(id => { const it = itemById(id); if (!it) return '';
-      return `<div class="row"><div class="main"><div class="name">${esc(it.name)}</div></div>
-        <input class="input" style="width:7.5em;flex:none" data-in="m-qty" data-id="${id}" value="${esc(mdraft.qty[id] || '')}" placeholder="分量" aria-label="${esc(it.name)}の分量">
-        <button class="iconbtn" data-act="pick" data-id="${id}" aria-label="${esc(it.name)}を外す">${ICON.minus}</button></div>`; }).join('')
-    : '<div class="empty-msg">下から食材を選んでください</div>';
+  // メニュー編集の画面：選んだ材料と分量
+  if ($('#chosen')){
+    $('#chosen').innerHTML = mdraft.itemIds.length ? mdraft.itemIds.map(id => { const it = itemById(id); if (!it) return '';
+        return `<div class="row"><div class="main"><div class="name">${esc(it.name)}</div></div>
+          <input class="input" style="width:7.5em;flex:none" data-in="m-qty" data-id="${id}" value="${esc(mdraft.qty[id] || '')}" placeholder="分量" aria-label="${esc(it.name)}の分量">
+          <button class="iconbtn" data-act="pick" data-id="${id}" aria-label="${esc(it.name)}を外す">${ICON.minus}</button></div>`; }).join('')
+      : '<div class="empty-msg">まだ材料がありません。下のボタンから選べます</div>';
+    return;
+  }
+  // 材料を選ぶ画面：カテゴリで絞って、マス目から選ぶ。検索したときは全部のカテゴリから探す
+  if (!$('#pick')) return;
   const q = S.pickQ.trim();
-  const foods = db.items.filter(i => i.cat === 'food' && !mdraft.itemIds.includes(i.id) && (!q || i.name.includes(q))).sort((a,b) => byJa(a.name,b.name));
+  const cats = [['freq','よく使う'], ...db.foodCats.map(c => [c.id, c.name])];
+  if (db.items.some(i => i.cat === 'food' && !hasItemCat(i))) cats.push(['none','未分類']);
+  if (!cats.some(([v]) => v === S.pickCat)) S.pickCat = 'freq';
+  $('#pickCats').innerHTML = q ? '' : filterChips(cats, S.pickCat, 'pick-cat');
+  let foods;
+  if (q) foods = db.items.filter(i => i.cat === 'food' && i.name.includes(q)).sort((a,b) => byJa(a.name,b.name));
+  else if (S.pickCat === 'freq') foods = frequentFoods();
+  else foods = db.items.filter(i => i.cat === 'food' && (S.pickCat === 'none' ? !hasItemCat(i) : i.gcatId === S.pickCat)).sort((a,b) => byJa(a.name,b.name));
+  const catName = i => { const c = db.foodCats.find(x => x.id === i.gcatId); return c ? c.name : '未分類'; };
   const canNew = q && !db.items.some(i => i.name === q && i.cat === 'food');
-  const groups = [...db.foodCats.map(c => [c.name, i => i.gcatId === c.id]), ['未分類', i => !hasItemCat(i)]];
-  $('#pick').innerHTML = groups.map(([name, fn]) => { const g = foods.filter(fn);
-      return g.length ? `<div style="width:100%;font-size:var(--fs-s);color:var(--muted);margin-top:4px">${esc(name)}</div>` + g.map(i => `<button class="chipbtn" data-act="pick" data-id="${i.id}">${esc(i.name)}</button>`).join('') : ''; }).join('') +
-    (canNew ? `<button class="chipbtn" data-act="pick-new">「${esc(q)}」を食材に登録して追加</button>` : '') +
-    (!foods.length && !canNew ? '<span class="hint" style="margin:0">追加できる食材がありません</span>' : '');
+  $('#pick').innerHTML = (foods.length || canNew) ? `<div class="pickgrid">${foods.map(i => { const on = mdraft.itemIds.includes(i.id);
+      return `<button class="pk ${on ? 'on' : ''}" data-act="pick" data-id="${i.id}" aria-pressed="${on}">${esc(i.name)}${q ? `<span class="c">${esc(catName(i))}</span>` : i.season.includes(S.m) ? '<span class="s">旬</span>' : ''}</button>`; }).join('')}
+      ${canNew ? `<button class="pk new" data-act="pick-new">＋「${esc(q)}」<span class="c">食材に登録して追加</span></button>` : ''}</div>`
+    : `<div class="empty-msg">${S.pickCat === 'freq' ? 'まだよく使う食材がありません。カテゴリから選んでください' : 'このカテゴリの食材はまだありません'}</div>`;
+  $('#pickCount').textContent = mdraft.itemIds.length ? `選んだ材料 ${mdraft.itemIds.length}品：${mdraft.itemIds.map(id => (itemById(id) || {}).name).filter(Boolean).join('、')}` : 'タップで選ぶ、もう一度タップで外す';
 }
 
 // 食材・日用品編集（食材と日用品で入力項目を分ける）
@@ -1264,12 +1311,15 @@ document.addEventListener('click', e => {
       if (i >= 0){ mdraft.itemIds.splice(i, 1); delete mdraft.qty[id]; } else mdraft.itemIds.push(id);
       renderPick(); break;
     }
+    case 'pick-open': S.picker = true; S.pickQ = ''; renderMenuSheet(); break;
+    case 'pick-done': S.picker = false; renderMenuSheet(); break;
+    case 'pick-cat': S.pickCat = el.dataset.v; renderPick(); { const b = $('#pickBody'); if (b) b.scrollTop = 0; } break;
     case 'pick-new': {
       const name = S.pickQ.trim(); if (!name) break;
-      const it = newItem(name, 'food', []);
+      const it = newItem(name, 'food', [], S.pickCat !== 'freq' && S.pickCat !== 'none' ? S.pickCat : '');
       db.items.push(it); save(); mdraft.itemIds.push(it.id);
       S.pickQ = ''; $('#pickInput').value = ''; renderPick();
-      toast(`「${name}」を食材に登録しました。旬は食材画面で設定できます`); break;
+      toast(`「${name}」を食材に登録しました。旬やカテゴリはマスタで設定できます`); break;
     }
     case 'menu-save': {
       const menuData = () => { const qty = {}; mdraft.itemIds.forEach(x => { const q = (mdraft.qty[x] || '').trim(); if (q) qty[x] = q; });
