@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="おうち帳">
-<title>おうち帳 v0.20</title>
+<title>おうち帳 v0.21</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
@@ -165,6 +165,12 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 .form-card{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);padding:2px 14px 14px}
 .pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .pair .field{margin-bottom:0}
+.urlrow{display:flex;gap:8px}
+.urlrow .btn{flex:none}
+.imp .row .seg{flex:none;width:10.5em}
+.imp .row .sub{white-space:normal}
+.srclink{display:flex;align-items:center;gap:12px}
+.srclink a{color:var(--acc-ink);font-size:var(--fs-s);font-weight:700;word-break:break-all}
 
 /* マスタのタイル */
 .tiles{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:14px}
@@ -253,7 +259,7 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 
 <script>
 'use strict';
-const VERSION = 'v0.20';
+const VERSION = 'v0.21';
 const KEY = 'ouchicho-data';
 const WD = ['日','月','火','水','木','金','土'];
 // 月ごとの季節色（画面のアクセント色）
@@ -451,7 +457,7 @@ function normalize(d){
   const categories = freshCats ? SEED_CATS.map(name => ({id:uid(), name})) : d.categories.filter(c => c && c.name).map(c => ({id:String(c.id || uid()), name:String(c.name)}));
   const menus = (Array.isArray(d.menus) ? d.menus : []).map(m => {
     const mn = {id:String(m.id || uid()), name:String(m.name || ''), categoryId:String(m.categoryId || ''), teiban:!!m.teiban, genen:!!m.genen,
-      itemIds:Array.isArray(m.itemIds) ? m.itemIds.map(String) : [], qty:{}, steps:String(m.steps || ''), updatedAt:m.updatedAt || Date.now()};
+      itemIds:Array.isArray(m.itemIds) ? m.itemIds.map(String) : [], qty:{}, steps:String(m.steps || ''), url:String(m.url || ''), updatedAt:m.updatedAt || Date.now()};
     if (m.qty && typeof m.qty === 'object') for (const [k,v] of Object.entries(m.qty)) if (v) mn.qty[k] = String(v);
     // v0.4以前のデータ：一般的なメニューと同じ名前ならカテゴリと分量を補う
     if (freshCats){
@@ -1036,8 +1042,8 @@ function renderDay(){
 function openMenu(id){
   const src = id ? menuById(id) : null;
   mdraft = {id:src ? src.id : null, name:src ? src.name : '', role:src ? src.role : (S.menuRole !== 'all' ? S.menuRole : 'main'), categoryId:src ? src.categoryId : (S.menuCat !== 'all' && S.menuCat !== 'none' ? S.menuCat : ''),
-    teiban:src ? !!src.teiban : false, genen:src ? !!src.genen : false, itemIds:src ? [...src.itemIds] : [], qty:src ? {...src.qty} : {}, steps:src ? src.steps : ''};
-  S.picker = false; S.pickQ = ''; S.pickCat = 'freq';
+    teiban:src ? !!src.teiban : false, genen:src ? !!src.genen : false, itemIds:src ? [...src.itemIds] : [], qty:src ? {...src.qty} : {}, steps:src ? src.steps : '', url:src ? (src.url || '') : ''};
+  S.picker = false; S.imp = null; S.pickQ = ''; S.pickCat = 'freq';
   openSheet('<div id="menuSheet" style="display:flex;flex-direction:column;flex:1;min-height:0"></div>');
   renderMenuSheet();
 }
@@ -1053,9 +1059,12 @@ function renderMenuSheet(){
       </div>`;
     renderPick(); return;
   }
+  if (S.imp){ renderImport(box); return; }
   const src = mdraft.id ? menuById(mdraft.id) : null;
   box.innerHTML = sheetHead(src ? 'メニューを編集' : 'メニューを追加') + `<div class="sheet-body">
     <label class="field"><span class="lbl">料理名</span><input class="input" data-in="m-name" value="${esc(mdraft.name)}" placeholder="例：肉じゃが"></label>
+    ${mdraft.url ? `<div class="field"><span class="lbl">元のレシピ</span><div class="srclink"><a href="${esc(mdraft.url)}" target="_blank" rel="noopener">${esc(hostOf(mdraft.url))} で作り方を見る</a><button class="linkbtn" data-act="m-url-del">外す</button></div></div>` : ''}
+    <div class="actions" style="margin-top:4px"><button class="btn sub" data-act="imp-open">レシピサイトから読み込む</button></div>
     <div class="field"><span class="lbl">献立の区分</span><div id="roleSeg"></div></div>
     <div class="field"><span class="lbl">種類</span><div class="chips" id="mCats"></div></div>
     <div class="pair">
@@ -1076,6 +1085,124 @@ function renderMenuMeta(){
   $('#teibanSeg').innerHTML = [[true,'定番'],[false,'ときどき']].map(([v,l]) => `<button class="${mdraft.teiban === v ? 'on' : ''}" data-act="m-teiban" data-v="${v}">${l}</button>`).join('');
   $('#genenSeg').innerHTML = [[false,'ふつう'],[true,'減塩']].map(([v,l]) => `<button class="${mdraft.genen === v ? 'on' : ''}" data-act="m-genen" data-v="${v}">${l}</button>`).join('');
 }
+// ---------- レシピサイトから読み込む ----------
+const RECIPE_API = 'https://ouchicho-recipe.jpmachinist7.workers.dev/';
+const hostOf = u => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
+// 表記ゆれ（左がおうち帳での書き方）。長いものから順に置き換える
+const ING_ALIAS = [
+  ['玉ねぎ','たまねぎ','玉葱','新玉ねぎ'],['にんじん','人参'],['じゃがいも','じゃが芋','馬鈴薯'],['卵','たまご','玉子','鶏卵'],
+  ['長ねぎ','長葱','白ねぎ','白葱','ねぎ','葱'],['小ねぎ'],['青ねぎ'],['万能ねぎ'],['しょうが','生姜'],['にんにく','大蒜'],
+  ['生しいたけ','しいたけ','椎茸'],['干ししいたけ','干し椎茸'],['大根','だいこん'],['ごぼう','牛蒡'],['なす','茄子'],['きゅうり','胡瓜'],
+  ['白菜','はくさい'],['ほうれん草','ほうれんそう'],['里芋','さといも'],['さつまいも','さつま芋','薩摩芋'],['かぼちゃ','南瓜'],
+  ['れんこん','蓮根'],['小松菜','こまつな'],['豆腐','とうふ'],['油揚げ','油揚','あぶらあげ'],
+  ['鶏もも','鶏もも肉','鶏腿肉','とりもも肉','とりもも'],['ひき肉','挽き肉','挽肉','ひきにく','合いびき肉','合挽き肉','合びき肉','合い挽き肉'],
+  ['豚こま','豚こま切れ肉','豚こま切れ','豚小間切れ','豚小間'],['牛こま','牛こま切れ肉','牛こま切れ','牛小間切れ','牛小間'],
+  ['さば','鯖'],['あじ','鯵'],['ぶり','鰤'],['たら','鱈'],['さんま','秋刀魚'],['かつお節','鰹節','かつおぶし'],['かつお','鰹'],['しめじ','ぶなしめじ']
+];
+const toHira = s => s.replace(/[\u30a1-\u30f6]/g, c => String.fromCharCode(c.charCodeAt(0) - 0x60));
+let aliasRe = null, aliasMap = null;
+function ingCanon(s){
+  if (!aliasRe){
+    aliasMap = new Map();
+    ING_ALIAS.forEach(r => r.forEach(v => aliasMap.set(toHira(v), toHira(r[0]))));
+    aliasRe = new RegExp([...aliasMap.keys()].sort((a,b) => b.length - a.length).join('|'), 'g');
+  }
+  return toHira(String(s).normalize('NFKC')).replace(/\s+/g, '').replace(aliasRe, m => aliasMap.get(m));
+}
+// 「●じゃがいも（男爵） 3個」→ 名前「じゃがいも」と分量「3個」に分ける
+function splitIngredient(line){
+  let t = String(line).normalize('NFKC').replace(/^[\s●○◎◇◆■□★☆※・*＊◯〇▲△▼▽♪]+/, '').replace(/^[(\[【〈<]?[A-Za-z][)\]】〉>]\s*/, '').replace(/^[A-Za-z]\s+/, '');
+  const m = t.match(/(大さじ|小さじ|カップ|少々|適量|適宜|お好み|ひとつまみ|少量|たっぷり|半分|半個|半玉|半本|[0-9½¼¾⅓⅔])/);
+  let name = m ? t.slice(0, m.index) : t, qty = m ? t.slice(m.index) : '';
+  name = name.replace(/[(（][^)）]*[)）]/g, '').replace(/[\s…・:：.。、,]+$/, '').trim();
+  if (!name){ name = t.trim(); qty = ''; }
+  return {name, qty:qty.trim()};
+}
+function matchFood(name){
+  const c = ingCanon(name); if (!c) return null;
+  let best = null, bl = 0;
+  db.items.forEach(i => {
+    if (i.cat !== 'food') return;
+    const k = ingCanon(i.name); if (!k) return;
+    if ((c.includes(k) || (c.length >= 2 && k.includes(c))) && k.length > bl){ best = i; bl = k.length; }
+  });
+  return best;
+}
+function guessFcat(name){
+  const seed = seedFcatOf(name), has = id => db.foodCats.some(c => c.id === id);
+  if (seed && has(seed)) return seed;
+  const rules = [['fc3',/肉|ベーコン|ハム|ソーセージ|ウインナー/],['fc4',/魚|えび|海老|エビ|いか|イカ|たこ|タコ|貝|あさり|しらす|ちくわ/],['fc2',/きのこ|茸|まいたけ|えのき|エリンギ|マッシュルーム/],
+    ['fc5',/卵|豆腐|納豆|厚揚げ|大豆/],['fc6',/米|ご飯|麺|うどん|そば|パスタ|スパゲッティ|粉|パン/]];
+  const r = rules.find(([id, re]) => re.test(name) && has(id));
+  return r ? r[0] : '';
+}
+function renderImport(box){
+  const st = S.imp;
+  const head = `<div class="sheet-head"><button class="iconbtn" data-act="imp-back" aria-label="メニューの編集に戻る">${ICON.prev}</button><h2 style="flex:1">レシピサイトから読み込む</h2></div>`;
+  let body = `<div class="field"><span class="lbl">レシピのページのURL</span><div class="urlrow">
+      <input class="input" type="url" inputmode="url" enterkeyhint="go" data-in="imp-url" value="${esc(st.url)}" placeholder="https://…" ${st.loading ? 'disabled' : ''}>
+      <button class="btn" data-act="imp-load" ${st.loading ? 'disabled' : ''}>${st.loading ? '読み込み中…' : '読み込む'}</button></div></div>`;
+  if (!st.data) body += `<p class="hint">レシピのページを開いて、共有ボタンの「コピー」でURLをコピーし、ここに貼り付けてください。料理名と材料・分量を読み込みます。作り方は元のページへのリンクとして残ります</p>
+      <p class="hint">サイトによっては読み込めないことがあります（レシピの情報を載せていないページや、読み取りを断っているページ）</p>`;
+  else {
+    const d = st.data, hit = st.rows.filter(r => r.itemId), miss = st.rows.filter(r => !r.itemId);
+    const seg = (r, i, labels) => `<div class="seg">${[[true, labels[0]], [false, labels[1]]].map(([v,l]) => `<button class="${r.use === v ? 'on' : ''}" data-act="imp-use" data-idx="${i}" data-v="${v}" aria-pressed="${r.use === v}">${l}</button>`).join('')}</div>`;
+    const row = (r, sub, labels) => { const i = st.rows.indexOf(r);
+      return `<div class="row"><div class="main"><div class="name">${esc(r.name)}</div><div class="sub">${sub}</div></div>${seg(r, i, labels)}</div>`; };
+    body += `<div class="section-title">${esc(d.name || '料理名なし')}${d.yield ? `<span class="cnt">${esc(d.yield)}</span>` : ''}</div>
+      <div class="section-title">登録済みの食材<span class="cnt">${hit.length}品</span></div>
+      <div class="list">${hit.length ? hit.map(r => row(r, `${r.dup ? '上と同じ食材' : `「${esc((itemById(r.itemId) || {}).name)}」として入れる`}${r.qty ? '　' + esc(r.qty) : ''}`, ['使う','使わない'])).join('') : '<div class="empty-msg">ありません</div>'}</div>
+      <div class="section-title">まだ食材にないもの<span class="cnt">${miss.length}品</span></div>
+      <div class="list">${miss.length ? miss.map(r => row(r, r.qty ? esc(r.qty) : '分量なし', ['新規登録','使わない'])).join('') : '<div class="empty-msg">ありません</div>'}</div>
+      <p class="hint">調味料など、買い物リストに出さなくていいものは「使わない」のままで大丈夫です。分量はあとからメニューの画面で直せます</p>
+      <div class="actions"><button class="btn" data-act="imp-apply">メニューに入れる</button></div>`;
+  }
+  box.innerHTML = head + `<div class="sheet-body">${body}</div>`;
+}
+async function importRecipe(){
+  const st = S.imp, m = st.url.match(/https?:\/\/[^\s"'<>]+/);
+  if (!m){ toast('URLを貼り付けてください'); return; }
+  st.url = m[0]; st.loading = true; st.data = null; renderMenuSheet();
+  let res, d;
+  try {
+    const ac = new AbortController(), tm = setTimeout(() => ac.abort(), 20000);
+    res = await fetch(RECIPE_API + '?url=' + encodeURIComponent(st.url), {signal:ac.signal});
+    clearTimeout(tm); d = await res.json();
+  } catch { d = {error:'network'}; }
+  if (S.imp !== st) return;  // 読み込み中に画面を閉じた
+  st.loading = false;
+  if (!d || d.error || !Array.isArray(d.ingredients)){
+    const msg = {'no-recipe':'このページにはレシピの情報が見つかりませんでした。別のサイトで試してください', 'fetch-failed':'ページを開けませんでした。URLを確かめるか、このサイトは読み込めないかもしれません',
+      'bad-url':'URLの形が正しくないようです', 'forbidden':'読み込みの仕組みに断られました（おうち帳の公開ページから開いてください）', 'network':'つながりませんでした。電波を確かめてもう一度試してください'}[d && d.error] || '読み込めませんでした';
+    renderMenuSheet(); toast(msg); return;
+  }
+  const seen = new Set();
+  st.data = d;
+  st.rows = d.ingredients.map(line => { const {name, qty} = splitIngredient(line), it = matchFood(name);
+    const dup = !!(it && seen.has(it.id)); if (it) seen.add(it.id);
+    return {name, qty, itemId:it ? it.id : null, dup, use:!!it && !dup}; }).filter(r => r.name);
+  renderMenuSheet();
+}
+function applyImport(){
+  const st = S.imp, d = st.data; let n = 0, made = 0;
+  if (!mdraft.name.trim() && d.name) mdraft.name = d.name;
+  mdraft.url = d.url || st.url;
+  st.rows.forEach(r => {
+    if (!r.use) return;
+    let id = r.itemId;
+    if (!id){
+      const same = db.items.find(i => i.cat === 'food' && i.name === r.name);
+      if (same) id = same.id; else { const it = newItem(r.name, 'food', [], guessFcat(r.name)); db.items.push(it); id = it.id; made++; }
+    }
+    if (!mdraft.itemIds.includes(id)){ mdraft.itemIds.push(id); n++; }
+    if (r.qty && !mdraft.qty[id]) mdraft.qty[id] = r.qty;
+  });
+  if (d.yield && !mdraft.steps.trim()) mdraft.steps = `分量は${d.yield}`;
+  if (made) save();
+  S.imp = null; renderMenuSheet();
+  toast(`材料を${n}品入れました${made ? `（${made}品を食材に登録）` : ''}。保存を押すと確定します`);
+}
+
 // よく使う食材：登録しているメニューで使われている回数が多い順
 function frequentFoods(){
   const n = new Map();
@@ -1379,7 +1506,7 @@ document.addEventListener('click', e => {
     }
     case 'menu-save': {
       const menuData = () => { const qty = {}; mdraft.itemIds.forEach(x => { const q = (mdraft.qty[x] || '').trim(); if (q) qty[x] = q; });
-        return {role:mdraft.role, categoryId:mdraft.categoryId, teiban:mdraft.teiban, genen:mdraft.genen, itemIds:mdraft.itemIds, qty, steps:mdraft.steps, updatedAt:Date.now()}; };
+        return {role:mdraft.role, categoryId:mdraft.categoryId, teiban:mdraft.teiban, genen:mdraft.genen, itemIds:mdraft.itemIds, qty, steps:mdraft.steps, url:mdraft.url || '', updatedAt:Date.now()}; };
       const name = mdraft.name.trim();
       if (!name){ toast('料理名を入れてください'); break; }
       if (db.menus.some(m => m.name === name && m.id !== mdraft.id)){ toast('同じ名前のメニューがあります'); break; }
@@ -1399,6 +1526,12 @@ document.addEventListener('click', e => {
     case 'master-back': S.master = null; render(); window.scrollTo(0,0); break;
     case 'menu-cat': S.menuCat = el.dataset.v; render(); break;
     case 'day-cat': S.dayCat = el.dataset.v; renderDay(); break;
+    case 'imp-open': S.imp = {url:'', loading:false, data:null, rows:[]}; renderMenuSheet(); break;
+    case 'imp-back': S.imp = null; renderMenuSheet(); break;
+    case 'imp-load': if (S.imp && !S.imp.loading) importRecipe(); break;
+    case 'imp-use': { const r = S.imp && S.imp.rows[Number(el.dataset.idx)]; if (r){ r.use = el.dataset.v === 'true'; renderMenuSheet(); } break; }
+    case 'imp-apply': if (S.imp && S.imp.data) applyImport(); break;
+    case 'm-url-del': mdraft.url = ''; renderMenuSheet(); break;
     case 'm-cat': mdraft.categoryId = mdraft.categoryId === id ? '' : id; renderMenuMeta(); break;
     case 'm-genen': mdraft.genen = el.dataset.v === 'true'; renderMenuMeta(); break;
     case 'cat-new': openCat(null, el.dataset.kind); break;
@@ -1578,6 +1711,7 @@ document.addEventListener('click', e => {
   }
 });
 
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.dataset && e.target.dataset.in === 'imp-url' && S.imp && !S.imp.loading){ e.preventDefault(); e.target.blur(); importRecipe(); } });
 document.addEventListener('input', e => {
   const k = e.target.dataset.in; if (!k) return;
   const v = e.target.value;
@@ -1590,6 +1724,7 @@ document.addEventListener('input', e => {
   else if (k === 'pickQ'){ S.pickQ = v; renderPick(); }
   else if (k === 'm-name') mdraft.name = v;
   else if (k === 'm-steps') mdraft.steps = v;
+  else if (k === 'imp-url'){ if (S.imp) S.imp.url = v; }
   else if (k === 'i-name') idraft.name = v;
   else if (k === 'i-unit') idraft.unit = v;
   else if (k === 'i-memo') idraft.memo = v;
