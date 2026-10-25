@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="おうち帳">
-<title>おうち帳 v0.21</title>
+<title>おうち帳 v0.22</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Zen+Maru+Gothic:wght@400;500;700&display=swap" rel="stylesheet">
@@ -166,6 +166,11 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 .pair{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 .pair .field{margin-bottom:0}
 .urlrow{display:flex;gap:8px}
+.stepper{display:flex;align-items:center;background:var(--chip);border-radius:12px;padding:3px;gap:3px}
+.stepper button{flex:none;width:36px;height:32px;border:0;border-radius:9px;background:var(--surface);font-size:18px;line-height:1;color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.stepper button:disabled{opacity:.35}
+.stepper span{flex:1;text-align:center;font-size:var(--fs-s);font-weight:700;white-space:nowrap}
+.row .scaled{font-size:var(--fs-s);color:var(--acc-ink);font-weight:700;line-height:1.4}
 .urlrow .btn{flex:none}
 .imp .row .seg{flex:none;width:10.5em}
 .imp .row .sub{white-space:normal}
@@ -259,7 +264,7 @@ textarea.input{min-height:120px;resize:vertical;line-height:1.6}
 
 <script>
 'use strict';
-const VERSION = 'v0.21';
+const VERSION = 'v0.22';
 const KEY = 'ouchicho-data';
 const WD = ['日','月','火','水','木','金','土'];
 // 月ごとの季節色（画面のアクセント色）
@@ -409,7 +414,7 @@ function menuFromSeed(row, items, categories){
   const cat = categories.find(c => c.name === catName);
   const itemIds = [], qty = {};
   ings.forEach(([n, q]) => { const it = items.find(i => i.name === n && i.cat === 'food'); if (it){ itemIds.push(it.id); qty[it.id] = q; } });
-  return {id:uid(), name, role:guessRole(name, catName), categoryId:cat ? cat.id : '', teiban, genen:false, itemIds, qty, steps:'', updatedAt:Date.now()};
+  return {id:uid(), name, role:guessRole(name, catName), categoryId:cat ? cat.id : '', teiban, genen:false, itemIds, qty, steps:'', serv:4, updatedAt:Date.now()};
 }
 function seed(){
   const items = [];
@@ -419,7 +424,7 @@ function seed(){
   SEED_GOODS.forEach(([n,g]) => items.push(newItem(n,'goods',[], (goodsCats.find(c => c.name === g) || {}).id)));
   const categories = SEED_CATS.map(name => ({id:uid(), name}));
   const menus = SEED_MENUS.map(r => menuFromSeed(r, items, categories));
-  return {schema:1, items, menus, categories, goodsCats, foodCats, stores:[], plan:{}, prices:[], shoplist:[], requests:[], members:{}, settings:{lastStoreId:''}};
+  return {schema:1, items, menus, categories, goodsCats, foodCats, stores:[], plan:{}, prices:[], shoplist:[], requests:[], members:{}, house:{people:3}, settings:{lastStoreId:''}};
 }
 // 一般的なメニュー・食材・日用品のうち、まだ無いものだけ足す
 function addGeneral(){
@@ -436,6 +441,29 @@ function addGeneral(){
   SEED_GOODS.forEach(([n,g]) => { if (!db.items.some(i => i.name === n && i.cat === 'goods')){ db.items.push(newItem(n,'goods',[], (db.goodsCats.find(c => c.name === g) || {}).id)); nItems++; } });
   SEED_MENUS.forEach(r => { if (!db.menus.some(m => m.name === r[0])){ db.menus.push(menuFromSeed(r, db.items, db.categories)); nMenus++; } });
   return {nItems, nMenus};
+}
+// 人数（1〜12人）。決まっていなければ既定の人数
+function clampServ(v, def){ const n = Math.round(Number(v)); return n >= 1 && n <= 12 ? n : def; }
+// 分量を人数に合わせて換算する（「大さじ1と1/2」「200g」「1/4玉」「2〜3個」など。少々・適量はそのまま）
+function scaleQty(q, f){
+  q = String(q || '');
+  if (!q || !isFinite(f) || Math.abs(f - 1) < 1e-9) return q;
+  const t = q.replace(/[０-９．／]/g, c => String.fromCharCode(c.charCodeAt(0) - 0xFEE0)).replace(/^半分$/, '1/2').replace(/半(?=個|本|玉|丁|枚|株|袋|パック|束|切れ|尾|カップ|$)/g, '1/2');
+  const FR = {'½':.5,'¼':.25,'¾':.75,'⅓':1/3,'⅔':2/3};
+  return t.replace(/(\d+(?:\.\d+)?)\s*と\s*(\d+)\s*\/\s*(\d+)|(\d+)\s*\/\s*(\d+)|(\d+(?:\.\d+)?)|([½¼¾⅓⅔])/g, (m, a, b, c, d2, e, n, u, off) => {
+    const v = (a !== undefined ? +a + b / c : d2 !== undefined ? d2 / e : n !== undefined ? +n : FR[u]) * f;
+    const metric = /^\s*(g|kg|グラム|ml|mL|cc|リットル|l\b|L)/.test(t.slice(off + m.length));
+    if (metric) return String(v >= 100 ? Math.round(v / 10) * 10 : v >= 10 ? Math.round(v) : Math.max(1, Math.round(v * 2) / 2));
+    return fracText(v);
+  });
+}
+function fracText(v){
+  let w = Math.floor(v), r = v - w;
+  const cands = w >= 3 ? [[0,''],[.5,'1/2'],[1,'']] : [[0,''],[.25,'1/4'],[1/3,'1/3'],[.5,'1/2'],[2/3,'2/3'],[.75,'3/4'],[1,'']];
+  let best = cands[0]; cands.forEach(c => { if (Math.abs(c[0] - r) < Math.abs(best[0] - r)) best = c; });
+  if (best[0] === 1){ w++; best = [0,'']; }
+  if (!w && !best[1]) return '1/4';
+  return w ? (best[1] ? `${w}と${best[1]}` : String(w)) : best[1];
 }
 function normalize(d){
   const items = (Array.isArray(d.items) ? d.items : []).map(i => ({
@@ -457,7 +485,7 @@ function normalize(d){
   const categories = freshCats ? SEED_CATS.map(name => ({id:uid(), name})) : d.categories.filter(c => c && c.name).map(c => ({id:String(c.id || uid()), name:String(c.name)}));
   const menus = (Array.isArray(d.menus) ? d.menus : []).map(m => {
     const mn = {id:String(m.id || uid()), name:String(m.name || ''), categoryId:String(m.categoryId || ''), teiban:!!m.teiban, genen:!!m.genen,
-      itemIds:Array.isArray(m.itemIds) ? m.itemIds.map(String) : [], qty:{}, steps:String(m.steps || ''), url:String(m.url || ''), updatedAt:m.updatedAt || Date.now()};
+      itemIds:Array.isArray(m.itemIds) ? m.itemIds.map(String) : [], qty:{}, steps:String(m.steps || ''), url:String(m.url || ''), serv:clampServ(m.serv, 4), updatedAt:m.updatedAt || Date.now()};
     if (m.qty && typeof m.qty === 'object') for (const [k,v] of Object.entries(m.qty)) if (v) mn.qty[k] = String(v);
     // v0.4以前のデータ：一般的なメニューと同じ名前ならカテゴリと分量を補う
     if (freshCats){
@@ -509,7 +537,8 @@ function normalize(d){
     Object.values(shopping).forEach(w => w.extra.forEach(id => { if (seen.has(id) || w.checked[id] || w.hidden.includes(id)) return; seen.add(id);
       shoplist.push({id:'m-' + id, itemId:id, note:w.notes[id] || '', storeId:w.store[id] || '', by:w.by[id] || '', from:'', checked:false, ts:0}); }));
   }
-  return {schema:1, items, menus, categories, goodsCats, foodCats, stores, plan, prices, shoplist, requests, members, settings:{lastStoreId, calMode:['month','2w','1w'].includes(st.calMode) ? st.calMode : 'month'}};
+  const house = {people:clampServ(d.house && d.house.people, 3)};
+  return {schema:1, items, menus, categories, goodsCats, foodCats, stores, plan, prices, shoplist, requests, members, house, settings:{lastStoreId, calMode:['month','2w','1w'].includes(st.calMode) ? st.calMode : 'month'}};
 }
 function load(){
   try { const raw = localStorage.getItem(KEY); return raw ? normalize(JSON.parse(raw)) : null; }
@@ -549,6 +578,7 @@ function toDocs(d){
   d.prices.forEach(x => m['prices/' + x.id] = x);
   d.requests.forEach(x => m['requests/' + x.id] = x);
   m['meta/members'] = {map:d.members};
+  m['meta/house'] = {people:d.house.people};
   for (const [k,v] of Object.entries(d.plan)) m['plan/' + k] = {ids:v};
   d.shoplist.forEach(x => m['shoplist/' + x.id] = x);
   m['meta/categories'] = {list:d.categories};
@@ -563,7 +593,7 @@ function fromDocs(map){
     if (col === 'plan') raw.plan[id] = v.ids;
     else if (col === 'shopping') raw.shopping[id] = v;
     else if (col === 'shoplist'){ (raw.shoplist = raw.shoplist || []).push(v); }
-    else if (col === 'meta'){ if (id === 'categories') raw.categories = v.list || []; if (id === 'goodsCats') raw.goodsCats = v.list || []; if (id === 'foodCats') raw.foodCats = v.list || []; if (id === 'members') raw.members = v.map || {}; }
+    else if (col === 'meta'){ if (id === 'categories') raw.categories = v.list || []; if (id === 'goodsCats') raw.goodsCats = v.list || []; if (id === 'foodCats') raw.foodCats = v.list || []; if (id === 'members') raw.members = v.map || {}; if (id === 'house') raw.house = v; }
     else if (raw[col]) raw[col].push(v);
   }
   return normalize(raw);
@@ -976,6 +1006,7 @@ function viewSettings(){
     <div class="list">
       <div class="row"><div class="main"><div class="name">状態</div><div class="sub" id="syncState">${syncStateText()}</div></div></div>
       <label class="row"><div class="main"><div class="name">自分の名前</div><div class="sub">リクエストや買い物リストに出ます</div></div><input class="input" style="width:9em;flex:none" data-ch="my-name" value="${esc(db.members[myUid()] || '')}" placeholder="例：ママ"></label>
+      <div class="row"><div class="main"><div class="name">家族の人数</div><div class="sub">メニューの分量をこの人数に換算します</div></div><div style="width:9em;flex:none">${stepper(db.house.people, 'house-people', '人')}</div></div>
       ${fbUser ? `<div class="row"><div class="main"><div class="name">ログイン中</div><div class="sub">${esc(fbUser.email || '')}</div></div><button class="btn sub" data-act="logout">ログアウト</button></div>` : ''}
     </div>
     <div class="section-title">初期データ</div>
@@ -1003,6 +1034,7 @@ function render(){
 // ---------- シート ----------
 function openSheet(html){ $('#sheet').innerHTML = html; $('#sheetWrap').hidden = false; document.body.style.overflow = 'hidden'; }
 function closeSheet(){ $('#sheetWrap').hidden = true; $('#sheet').innerHTML = ''; document.body.style.overflow = ''; mdraft = null; idraft = null; sdraft = null; cdraft = null; }
+const stepper = (v, act, unit) => `<div class="stepper"><button data-act="${act}" data-d="-1" ${v <= 1 ? 'disabled' : ''} aria-label="減らす">−</button><span>${v}${unit}</span><button data-act="${act}" data-d="1" ${v >= 12 ? 'disabled' : ''} aria-label="増やす">＋</button></div>`;
 const sheetHead = title => `<div class="sheet-head"><h2>${title}</h2><button class="iconbtn" data-act="close-sheet" aria-label="閉じる">${ICON.close}</button></div>`;
 
 // 日付の献立
@@ -1042,8 +1074,8 @@ function renderDay(){
 function openMenu(id){
   const src = id ? menuById(id) : null;
   mdraft = {id:src ? src.id : null, name:src ? src.name : '', role:src ? src.role : (S.menuRole !== 'all' ? S.menuRole : 'main'), categoryId:src ? src.categoryId : (S.menuCat !== 'all' && S.menuCat !== 'none' ? S.menuCat : ''),
-    teiban:src ? !!src.teiban : false, genen:src ? !!src.genen : false, itemIds:src ? [...src.itemIds] : [], qty:src ? {...src.qty} : {}, steps:src ? src.steps : '', url:src ? (src.url || '') : ''};
-  S.picker = false; S.imp = null; S.pickQ = ''; S.pickCat = 'freq';
+    teiban:src ? !!src.teiban : false, genen:src ? !!src.genen : false, itemIds:src ? [...src.itemIds] : [], qty:src ? {...src.qty} : {}, steps:src ? src.steps : '', url:src ? (src.url || '') : '', serv:src ? src.serv : db.house.people};
+  S.picker = false; S.imp = null; S.mPeople = db.house.people; S.pickQ = ''; S.pickCat = 'freq';
   openSheet('<div id="menuSheet" style="display:flex;flex-direction:column;flex:1;min-height:0"></div>');
   renderMenuSheet();
 }
@@ -1071,7 +1103,8 @@ function renderMenuSheet(){
       <div class="field"><span class="lbl">よく作る？</span><div class="seg" id="teibanSeg"></div></div>
       <div class="field"><span class="lbl">味つけ</span><div class="seg" id="genenSeg"></div></div>
     </div>
-    <div class="field"><span class="lbl">材料と分量（家の作り方に合わせて直せます）</span><div class="list" id="chosen"></div>
+    <div class="field"><span class="lbl">材料と分量（家の作り方に合わせて直せます）</span><div id="servBox"></div><div class="list" id="chosen" style="margin-top:10px"></div>
+      <div class="actions" id="rescaleBox" style="margin-top:8px"></div>
       <div class="actions" style="margin-top:8px"><button class="btn sub" data-act="pick-open">材料を追加・変更する</button></div></div>
     <label class="field"><span class="lbl">作り方・メモ</span><textarea class="input" data-in="m-steps" placeholder="手順やコツを書いておく">${esc(mdraft.steps)}</textarea></label>
     <div class="actions">${src ? '<button class="btn danger" data-act="menu-del">削除</button>' : ''}<button class="btn" data-act="menu-save">保存</button></div>
@@ -1187,6 +1220,10 @@ function applyImport(){
   const st = S.imp, d = st.data; let n = 0, made = 0;
   if (!mdraft.name.trim() && d.name) mdraft.name = d.name;
   mdraft.url = d.url || st.url;
+  // レシピの人数：材料がまだ無ければその人数を使い、あればメニューの人数に換算して入れる
+  const ym = String(d.yield || '').normalize('NFKC').match(/\d+/), yn = ym ? clampServ(ym[0], 0) : 0;
+  let f = 1;
+  if (yn){ if (mdraft.itemIds.length) f = mdraft.serv / yn; else mdraft.serv = yn; }
   st.rows.forEach(r => {
     if (!r.use) return;
     let id = r.itemId;
@@ -1195,9 +1232,8 @@ function applyImport(){
       if (same) id = same.id; else { const it = newItem(r.name, 'food', [], guessFcat(r.name)); db.items.push(it); id = it.id; made++; }
     }
     if (!mdraft.itemIds.includes(id)){ mdraft.itemIds.push(id); n++; }
-    if (r.qty && !mdraft.qty[id]) mdraft.qty[id] = r.qty;
+    if (r.qty && !mdraft.qty[id]) mdraft.qty[id] = scaleQty(r.qty, f);
   });
-  if (d.yield && !mdraft.steps.trim()) mdraft.steps = `分量は${d.yield}`;
   if (made) save();
   S.imp = null; renderMenuSheet();
   toast(`材料を${n}品入れました${made ? `（${made}品を食材に登録）` : ''}。保存を押すと確定します`);
@@ -1212,8 +1248,15 @@ function frequentFoods(){
 function renderPick(){
   // メニュー編集の画面：選んだ材料と分量
   if ($('#chosen')){
+    const f = S.mPeople / mdraft.serv, diff = S.mPeople !== mdraft.serv;
+    $('#servBox').innerHTML = `<div class="pair"><div class="field" style="margin:0"><span class="lbl">この分量は</span>${stepper(mdraft.serv, 'm-serv', '人分')}</div>
+      <div class="field" style="margin:0"><span class="lbl">何人分作る？</span>${stepper(S.mPeople, 'm-people', '人分')}</div></div>`;
+    const hasQty = mdraft.itemIds.some(id => (mdraft.qty[id] || '').trim());
+    $('#rescaleBox').innerHTML = diff && hasQty ? `<button class="btn sub" data-act="m-rescale">${S.mPeople}人分の分量に書き換える</button>` : '';
+    $('#rescaleBox').hidden = !(diff && hasQty);
     $('#chosen').innerHTML = mdraft.itemIds.length ? mdraft.itemIds.map(id => { const it = itemById(id); if (!it) return '';
-        return `<div class="row"><div class="main"><div class="name">${esc(it.name)}</div></div>
+        const q = (mdraft.qty[id] || '').trim(), sc = diff && q ? scaleQty(q, f) : '';
+        return `<div class="row"><div class="main"><div class="name">${esc(it.name)}</div>${diff ? `<div class="scaled" data-sc="${id}">${sc ? `${S.mPeople}人分：${esc(sc)}` : ''}</div>` : ''}</div>
           <input class="input" style="width:7.5em;flex:none" data-in="m-qty" data-id="${id}" value="${esc(mdraft.qty[id] || '')}" placeholder="分量" aria-label="${esc(it.name)}の分量">
           <button class="iconbtn" data-act="pick" data-id="${id}" aria-label="${esc(it.name)}を外す">${ICON.minus}</button></div>`; }).join('')
       : '<div class="empty-msg">まだ材料がありません。下のボタンから選べます</div>';
@@ -1331,7 +1374,7 @@ function planIngredients(){
     (db.plan[ds] || []).map(menuById).filter(Boolean).forEach(mn => mn.itemIds.forEach(id => {
       if (!itemById(id)) return;
       if (!map.has(id)) map.set(id, []);
-      map.get(id).push(`${shortDate(ds)}${wd} ${mn.name}${mn.qty && mn.qty[id] ? ' ' + mn.qty[id] : ''}`);
+      map.get(id).push(`${shortDate(ds)}${wd} ${mn.name}${mn.qty && mn.qty[id] ? ' ' + scaleQty(mn.qty[id], db.house.people / mn.serv) : ''}`);
     }));
   }
   return map;
@@ -1506,7 +1549,7 @@ document.addEventListener('click', e => {
     }
     case 'menu-save': {
       const menuData = () => { const qty = {}; mdraft.itemIds.forEach(x => { const q = (mdraft.qty[x] || '').trim(); if (q) qty[x] = q; });
-        return {role:mdraft.role, categoryId:mdraft.categoryId, teiban:mdraft.teiban, genen:mdraft.genen, itemIds:mdraft.itemIds, qty, steps:mdraft.steps, url:mdraft.url || '', updatedAt:Date.now()}; };
+        return {role:mdraft.role, categoryId:mdraft.categoryId, teiban:mdraft.teiban, genen:mdraft.genen, itemIds:mdraft.itemIds, qty, steps:mdraft.steps, url:mdraft.url || '', serv:mdraft.serv, updatedAt:Date.now()}; };
       const name = mdraft.name.trim();
       if (!name){ toast('料理名を入れてください'); break; }
       if (db.menus.some(m => m.name === name && m.id !== mdraft.id)){ toast('同じ名前のメニューがあります'); break; }
@@ -1531,6 +1574,14 @@ document.addEventListener('click', e => {
     case 'imp-load': if (S.imp && !S.imp.loading) importRecipe(); break;
     case 'imp-use': { const r = S.imp && S.imp.rows[Number(el.dataset.idx)]; if (r){ r.use = el.dataset.v === 'true'; renderMenuSheet(); } break; }
     case 'imp-apply': if (S.imp && S.imp.data) applyImport(); break;
+    case 'm-serv': mdraft.serv = clampServ(mdraft.serv + Number(el.dataset.d), mdraft.serv); renderPick(); break;
+    case 'm-people': S.mPeople = clampServ(S.mPeople + Number(el.dataset.d), S.mPeople); renderPick(); break;
+    case 'm-rescale': {
+      const f = S.mPeople / mdraft.serv;
+      mdraft.itemIds.forEach(x => { if (mdraft.qty[x]) mdraft.qty[x] = scaleQty(mdraft.qty[x], f); });
+      mdraft.serv = S.mPeople; renderPick(); toast(`${S.mPeople}人分に書き換えました。保存を押すと確定します`); break;
+    }
+    case 'house-people': db.house.people = clampServ(db.house.people + Number(el.dataset.d), db.house.people); save(); render(); break;
     case 'm-url-del': mdraft.url = ''; renderMenuSheet(); break;
     case 'm-cat': mdraft.categoryId = mdraft.categoryId === id ? '' : id; renderMenuMeta(); break;
     case 'm-genen': mdraft.genen = el.dataset.v === 'true'; renderMenuMeta(); break;
@@ -1729,7 +1780,8 @@ document.addEventListener('input', e => {
   else if (k === 'i-unit') idraft.unit = v;
   else if (k === 'i-memo') idraft.memo = v;
   else if (k === 'c-name') cdraft.name = v;
-  else if (k === 'm-qty') mdraft.qty[e.target.dataset.id] = v;
+  else if (k === 'm-qty'){ const id = e.target.dataset.id; mdraft.qty[id] = v;
+    const sc = document.querySelector(`[data-sc="${id}"]`); if (sc) sc.textContent = v.trim() ? `${S.mPeople}人分：${scaleQty(v.trim(), S.mPeople / mdraft.serv)}` : ''; }
   else if (k === 's-name') sdraft.name = v;
   else if (k === 's-memo') sdraft.memo = v;
 });
